@@ -8,7 +8,7 @@ import {
   ChevronDown, ChevronUp, Instagram, Facebook, Twitter, Phone, MapPin,
   HelpCircle, Eye, MousePointerClick, LayoutDashboard, BarChart3, 
   Users, Package, Settings, LogOut, TrendingUp, AlertCircle, FileText,
-  Search, Filter, MoreHorizontal, Server, Lock, Database, Key, Network, Download, FileCode, Github, ExternalLink, BookOpen, Cloud, UserCheck, User, LogIn, ArrowRight, Loader2
+  Search, Filter, MoreHorizontal, Server, Lock, Database, Key, Network, Download, FileCode, Github, ExternalLink, BookOpen, Cloud, UserCheck, User, LogIn, ArrowRight, Loader2, Save, Scale
 } from "lucide-react";
 import Markdown from "react-markdown";
 // استيراد مكتبة AWS SDK من CDN للعمل داخل المتصفح مباشرة
@@ -32,9 +32,7 @@ const AWS_CONFIG = {
 const OWNER_PHONE = "201011500753"; 
 
 // --- Safe Supabase Initialization ---
-// هذه الدالة تمنع توقف التطبيق إذا كانت الروابط غير صحيحة
 const createSafeSupabaseClient = () => {
-    // Trim values to remove any accidental whitespace
     const url = SUPABASE_URL ? SUPABASE_URL.trim() : "";
     const key = SUPABASE_ANON_KEY ? SUPABASE_ANON_KEY.trim() : "";
 
@@ -48,21 +46,18 @@ const createSafeSupabaseClient = () => {
         }
     }
 
-    // Mock client fallback (نسخة وهمية ليعمل التطبيق بدون اتصال)
     return {
         auth: {
             getSession: async () => ({ data: { session: null }, error: null }),
             onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
-            signUp: async () => {
-                alert("⚠️ خطأ في الاتصال: يرجى التحقق من مفاتيح Supabase.");
-                return { data: null, error: { message: "Configuration missing or invalid" } };
-            },
-            signInWithPassword: async () => {
-                alert("⚠️ خطأ في الاتصال: يرجى التحقق من مفاتيح Supabase.");
-                return { data: null, error: { message: "Configuration missing or invalid" } };
-            },
+            signUp: async () => ({ data: null, error: { message: "Supabase not configured" } }),
+            signInWithPassword: async () => ({ data: null, error: { message: "Supabase not configured" } }),
             signOut: async () => {},
-        }
+        },
+        from: () => ({
+            select: () => ({ eq: () => ({ single: async () => ({ data: null, error: null }) }) }),
+            upsert: async () => ({ error: null }),
+        })
     };
 };
 
@@ -77,6 +72,7 @@ interface Product {
   price: string;
   description: string;
   color: string;
+  imageKeyword?: string; // For generating placeholder images
   tag?: string; 
 }
 
@@ -103,6 +99,12 @@ interface BlogPost {
   date: string;
 }
 
+interface LegalPolicies {
+    privacy: string;
+    terms: string;
+    refund: string;
+}
+
 interface StoreConfig {
   storeName: string;
   tagline: string;
@@ -116,6 +118,7 @@ interface StoreConfig {
   testimonials: Testimonial[];
   faq: FAQItem[];
   blogPosts: BlogPost[];
+  policies?: LegalPolicies; // Added Policies
   subdomain: string;
   contactEmail: string;
   whatsappNumber: string;
@@ -160,6 +163,11 @@ const initialStoreConfig: StoreConfig = {
     { question: "هل المنتجات أصلية؟", answer: "نعم، جميع منتجاتنا أصلية 100% ومضمونة." }
   ],
   blogPosts: [],
+  policies: {
+      privacy: "نحترم خصوصيتك ونلتزم بحماية بياناتك الشخصية...",
+      terms: "باستخدامك لهذا الموقع فإنك توافق على الشروط التالية...",
+      refund: "يمكنك استرجاع المنتج خلال 14 يوم من تاريخ الشراء بشرط عدم استخدامه..."
+  },
   subdomain: "",
   contactEmail: "support@ehab.shop",
   whatsappNumber: "",
@@ -191,6 +199,7 @@ const storeSchema = {
           price: { type: Type.STRING },
           description: { type: Type.STRING },
           color: { type: Type.STRING },
+          imageKeyword: { type: Type.STRING, description: "كلمة مفتاحية واحدة بالإنجليزية تصف المنتج للبحث عن صورة (مثال: coffee, shoes, watch)" },
           tag: { type: Type.STRING, description: "علامة مميزة مثل: جديد، خصم، الأكثر مبيعاً" }
         }
       }
@@ -239,6 +248,15 @@ const storeSchema = {
       },
       description: "2 مقالات قصيرة مفيدة للعملاء تتعلق بمنتجات المتجر"
     },
+    policies: {
+        type: Type.OBJECT,
+        properties: {
+            privacy: { type: Type.STRING, description: "نص سياسة الخصوصية باللغة العربية" },
+            terms: { type: Type.STRING, description: "نص شروط الاستخدام باللغة العربية" },
+            refund: { type: Type.STRING, description: "سياسة الاسترجاع والاستبدال باللغة العربية" }
+        },
+        description: "Generate professional legal policies in Arabic tailored to the store type."
+    },
     messageToUser: { type: Type.STRING, description: "ردك على المستخدم" }
   },
   required: ["storeName", "primaryColor", "messageToUser"]
@@ -251,9 +269,58 @@ const SYSTEM_INSTRUCTION = `
 القواعد:
 1. صمم كل قسم بعناية: المنتجات، المزايا، الأسئلة الشائعة، آراء العملاء، والمدونة.
 2. استخدم محتوى تسويقي مقنع باللغة العربية.
-3. كن مبدعاً في اختيار الألوان لتناسب هوية العلامة التجارية (مثلاً: الأخضر للأغذية الصحية، الأسود للفخامة).
-4. أضف مقالات تدوينية (Blog Posts) مفيدة تزيد من قيمة المتجر.
+3. كن مبدعاً في اختيار الألوان لتناسب هوية العلامة التجارية.
+4. أضف مقالات تدوينية (Blog Posts) مفيدة.
+5. لكل منتج، اختر "imageKeyword" دقيق باللغة الإنجليزية (مثلاً: "perfume" لمتجر عطور) ليتم جلب صورة مناسبة.
+6. قم بتوليد نصوص قانونية (سياسة الخصوصية، الاسترجاع) احترافية ومناسبة لنشاط المتجر (مثلاً: المأكولات لا تسترجع، الملابس تسترجع بشروط).
 `;
+
+// --- HELPER: Save/Load Store Logic ---
+const DB_TABLE_NAME = 'stores'; 
+
+const saveStoreToSupabase = async (userId: string, config: StoreConfig) => {
+    if (!isSupabaseConfigured || !userId) return { error: 'Not authenticated' };
+    
+    try {
+        const { error } = await supabase
+            .from(DB_TABLE_NAME)
+            .upsert({ 
+                user_id: userId, 
+                subdomain: config.subdomain || 'draft-' + Math.random().toString(36).slice(-4), 
+                config: config,
+                updated_at: new Date().toISOString()
+            }, { onConflict: 'user_id' });
+
+        if (error) throw error;
+        return { success: true };
+    } catch (err: any) {
+        console.error("Save to Cloud Error:", err);
+        return { error: err.message };
+    }
+};
+
+const loadStoreFromSupabase = async (userId: string) => {
+    if (!isSupabaseConfigured || !userId) return null;
+    
+    try {
+        const { data, error } = await supabase
+            .from(DB_TABLE_NAME)
+            .select('config')
+            .eq('user_id', userId)
+            .single();
+            
+        if (error) throw error;
+        return data?.config as StoreConfig;
+    } catch (err) {
+        console.log("No cloud save found or error loading:", err);
+        return null;
+    }
+};
+
+const getProductImage = (keyword?: string) => {
+    if (!keyword) return null;
+    return `https://source.unsplash.com/400x300/?${encodeURIComponent(keyword)}`;
+};
 
 // --- ADVANCED Store Exporter Function (SPA + CMS) ---
 const generateStaticStoreHTML = (config: StoreConfig) => {
@@ -261,7 +328,8 @@ const generateStaticStoreHTML = (config: StoreConfig) => {
     ...config, 
     adminPassword: config.adminPassword || 'admin123',
     seoTitle: config.seoTitle || config.storeName,
-    seoKeywords: config.seoKeywords || 'متجر, تسوق'
+    seoKeywords: config.seoKeywords || 'متجر, تسوق',
+    policies: config.policies || { privacy: '', terms: '', refund: '' }
   };
 
   return `<!DOCTYPE html>
@@ -271,18 +339,16 @@ const generateStaticStoreHTML = (config: StoreConfig) => {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title x-data x-text="$store.app.config.seoTitle || $store.app.config.storeName"></title>
     <meta name="description" :content="$store.app.config.aboutUs">
-    <meta name="keywords" :content="$store.app.config.seoKeywords">
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;900&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         body { font-family: 'Cairo', sans-serif; }
-        .primary-bg { background-color: var(--primary-color); }
-        .primary-text { color: var(--primary-color); }
-        .primary-border { border-color: var(--primary-color); }
         [x-cloak] { display: none !important; }
-        .dashboard-layout { display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; }
-        @media (max-width: 768px) { .dashboard-layout { grid-template-columns: 1fr; } }
+        /* Smooth scrolling */
+        html { scroll-behavior: smooth; }
+        .modal-enter { opacity: 0; transform: scale(0.9); }
+        .modal-enter-active { opacity: 1; transform: scale(1); transition: all 0.3s ease-out; }
     </style>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 </head>
@@ -324,9 +390,6 @@ const generateStaticStoreHTML = (config: StoreConfig) => {
                 <header class="py-24 px-4 text-center bg-white relative overflow-hidden">
                     <div class="absolute inset-0 opacity-5" :style="'background-color: ' + config.primaryColor"></div>
                     <div class="relative z-10 max-w-4xl mx-auto">
-                        <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white shadow-sm border border-slate-100 text-slate-600 text-xs font-bold mb-8">
-                             <i data-lucide="star" class="w-3 h-3 text-yellow-500 fill-yellow-500"></i> خيار العملاء الأول
-                        </div>
                         <h2 class="text-4xl md:text-6xl font-black mb-6 text-slate-900 leading-tight" x-text="config.tagline"></h2>
                         <p class="text-xl text-slate-500 mb-10 max-w-2xl mx-auto leading-relaxed" x-text="config.aboutUs"></p>
                         <a href="#products" class="inline-block px-10 py-4 rounded-xl text-white font-bold shadow-xl hover:-translate-y-1 transition-transform" :style="'background-color: ' + config.primaryColor">تسوق الآن</a>
@@ -344,8 +407,10 @@ const generateStaticStoreHTML = (config: StoreConfig) => {
                             <template x-for="product in config.products">
                                 <div class="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-2xl transition-all duration-300 group">
                                     <div class="h-72 flex items-center justify-center relative overflow-hidden" :style="'background-color: ' + (product.color || '#f1f5f9')">
-                                        <span class="text-8xl font-black text-black/5 group-hover:scale-110 transition-transform duration-500" x-text="product.name.substring(0,2)"></span>
-                                        <div x-show="product.tag" class="absolute top-4 right-4 bg-black text-white text-[10px] px-3 py-1 rounded-full font-bold uppercase tracking-wider" x-text="product.tag"></div>
+                                        <!-- If image keyword exists, try to show image (placeholder logic in builder) -->
+                                        <div x-show="product.imageKeyword" class="absolute inset-0 bg-cover bg-center transition-transform duration-700 group-hover:scale-110" :style="'background-image: url(https://source.unsplash.com/400x300/?' + (product.imageKeyword || 'product') + ')'"></div>
+                                        <span x-show="!product.imageKeyword" class="text-8xl font-black text-black/5" x-text="product.name.substring(0,2)"></span>
+                                        <div x-show="product.tag" class="absolute top-4 right-4 bg-black text-white text-[10px] px-3 py-1 rounded-full font-bold uppercase tracking-wider z-10" x-text="product.tag"></div>
                                     </div>
                                     <div class="p-8">
                                         <div class="flex justify-between items-start mb-3">
@@ -371,6 +436,13 @@ const generateStaticStoreHTML = (config: StoreConfig) => {
                              <i data-lucide="store" class="w-8 h-8 text-slate-400"></i>
                              <span x-text="config.storeName"></span>
                         </h2>
+                        
+                        <div class="flex flex-wrap justify-center gap-6 text-xs text-slate-400 mb-8 font-bold">
+                            <a href="#" @click.prevent="openPolicy('privacy')" class="hover:text-white transition-colors">سياسة الخصوصية</a>
+                            <a href="#" @click.prevent="openPolicy('terms')" class="hover:text-white transition-colors">شروط الاستخدام</a>
+                            <a href="#" @click.prevent="openPolicy('refund')" class="hover:text-white transition-colors">سياسة الاسترجاع</a>
+                        </div>
+
                         <div class="mt-4">
                             <button @click="navigateToAdmin()" class="text-[10px] text-slate-700 hover:text-slate-500 font-mono transition-colors">الدخول كمسؤول</button>
                         </div>
@@ -379,10 +451,24 @@ const generateStaticStoreHTML = (config: StoreConfig) => {
             </div>
         </template>
 
+        <!-- === POLICY MODAL === -->
+        <div x-show="activePolicy" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" x-cloak>
+            <div @click.outside="activePolicy = null" class="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+                <div class="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                    <h3 class="font-bold text-xl text-slate-900" x-text="getPolicyTitle()"></h3>
+                    <button @click="activePolicy = null" class="p-2 hover:bg-gray-200 rounded-full transition-colors"><i data-lucide="x" class="w-5 h-5 text-slate-500"></i></button>
+                </div>
+                <div class="p-8 overflow-y-auto leading-loose text-sm text-slate-600 whitespace-pre-wrap" x-text="getPolicyContent()"></div>
+                <div class="p-4 border-t border-gray-100 bg-gray-50 text-center">
+                    <button @click="activePolicy = null" class="px-6 py-2 bg-slate-900 text-white rounded-lg font-bold text-sm">إغلاق</button>
+                </div>
+            </div>
+        </div>
+
         <!-- === ROUTE: LOGIN === -->
         <template x-if="currentRoute === 'login'">
             <div class="min-h-screen flex items-center justify-center bg-slate-950 px-4 relative overflow-hidden">
-                <div class="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-20"></div>
+                <!-- ... Login Form ... -->
                 <div class="bg-slate-900 p-10 rounded-3xl shadow-2xl border border-slate-800 w-full max-w-md relative z-10">
                     <div class="text-center mb-8">
                         <div class="bg-indigo-500/10 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-indigo-500/20">
@@ -418,14 +504,11 @@ const generateStaticStoreHTML = (config: StoreConfig) => {
                         <button @click="activeTab = 'dashboard'" :class="activeTab === 'dashboard' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-bold text-sm">
                             <i data-lucide="layout-dashboard" class="w-5 h-5"></i> نظرة عامة
                         </button>
-                         <button @click="activeTab = 'guide'" :class="activeTab === 'guide' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-bold text-sm">
-                            <i data-lucide="book-open" class="w-5 h-5"></i> دليل الاستخدام
-                        </button>
                         <button @click="activeTab = 'products'" :class="activeTab === 'products' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-bold text-sm">
                             <i data-lucide="package" class="w-5 h-5"></i> المنتجات
                         </button>
                         <button @click="activeTab = 'settings'" :class="activeTab === 'settings' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-bold text-sm">
-                            <i data-lucide="settings" class="w-5 h-5"></i> الإعدادات & SEO
+                            <i data-lucide="settings" class="w-5 h-5"></i> الإعدادات
                         </button>
                     </nav>
                     <div class="p-4 border-t border-slate-800">
@@ -450,75 +533,10 @@ const generateStaticStoreHTML = (config: StoreConfig) => {
                         
                         <!-- TAB: OVERVIEW -->
                         <div x-show="activeTab === 'dashboard'" class="space-y-6">
-                            <!-- Welcome Alert -->
-                            <div class="bg-gradient-to-r from-slate-800 to-slate-900 rounded-2xl p-8 text-white shadow-xl relative overflow-hidden">
-                                <div class="relative z-10">
-                                    <h3 class="text-2xl font-bold mb-2">مرحباً بك في لوحة تحكم متجرك! 🎉</h3>
-                                    <p class="opacity-70 max-w-2xl leading-relaxed text-sm mb-6">لديك تحكم كامل في متجرك. يمكنك إدارة المنتجات وتغيير التصميم ومتابعة الأداء. جميع التغييرات يتم تطبيقها فوراً.</p>
-                                    <button @click="activeTab = 'guide'" class="bg-white text-slate-900 px-6 py-2 rounded-lg font-bold text-sm hover:bg-indigo-50 transition-colors">ابزأ من هنا (الدليل)</button>
-                                </div>
-                                <i data-lucide="sparkles" class="absolute top-4 left-4 w-40 h-40 text-white opacity-5 rotate-12"></i>
-                            </div>
-
                             <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                                 <div class="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
                                     <div class="text-slate-400 text-xs font-bold uppercase tracking-wider mb-2">عدد المنتجات</div>
                                     <div class="text-3xl font-black text-slate-800" x-text="config.products.length"></div>
-                                </div>
-                                <div class="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
-                                    <div class="text-slate-400 text-xs font-bold uppercase tracking-wider mb-2">الزيارات (تجريبي)</div>
-                                    <div class="text-3xl font-black text-slate-800">142</div>
-                                </div>
-                                <div class="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
-                                    <div class="text-slate-400 text-xs font-bold uppercase tracking-wider mb-2">خادم الاستضافة</div>
-                                    <div class="text-xl font-bold text-emerald-600 flex items-center gap-2">
-                                        <i data-lucide="cloud" class="w-5 h-5"></i> AWS S3
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- TAB: GUIDE (ONBOARDING) -->
-                        <div x-show="activeTab === 'guide'" class="space-y-8 animate-fade-in">
-                            <div class="bg-white rounded-2xl border border-gray-200 p-8 shadow-sm">
-                                <h3 class="font-bold text-xl mb-6 text-slate-900 flex items-center gap-2">
-                                    <i data-lucide="book-open" class="w-6 h-6 text-indigo-500"></i>
-                                    دليل استخدام المتجر
-                                </h3>
-                                <div class="space-y-8">
-                                    <!-- Step 1 -->
-                                    <div class="flex gap-4">
-                                        <div class="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-lg shrink-0">1</div>
-                                        <div>
-                                            <h4 class="font-bold text-lg text-slate-800 mb-2">كيف أضيف منتجاً جديداً؟</h4>
-                                            <p class="text-slate-600 text-sm leading-relaxed mb-4">
-                                                انتقل إلى قسم <strong>"المنتجات"</strong> من القائمة الجانبية. اضغط على زر <strong>"إضافة منتج"</strong> الأخضر.
-                                                سيظهر لك صف جديد، قم بتعبئة اسم المنتج والسعر والوصف. لا تنس الضغط على زر "حفظ" في الأسفل.
-                                            </p>
-                                        </div>
-                                    </div>
-                                    <!-- Step 2 -->
-                                    <div class="flex gap-4">
-                                        <div class="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-lg shrink-0">2</div>
-                                        <div>
-                                            <h4 class="font-bold text-lg text-slate-800 mb-2">كيف أعدل ألوان المتجر واسمه؟</h4>
-                                            <p class="text-slate-600 text-sm leading-relaxed mb-4">
-                                                انتقل إلى قسم <strong>"الإعدادات & SEO"</strong>. ستجد خيارات لتغيير اسم المتجر، الشعار النصي، واللون الرئيسي.
-                                                يمكنك أيضاً تحسين ظهورك في جوجل عن طريق تعديل "عنوان الصفحة (SEO)" والكلمات المفتاحية.
-                                            </p>
-                                        </div>
-                                    </div>
-                                    <!-- Step 3 -->
-                                    <div class="flex gap-4">
-                                        <div class="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-lg shrink-0">3</div>
-                                        <div>
-                                            <h4 class="font-bold text-lg text-slate-800 mb-2">هل التعديلات تظهر فوراً؟</h4>
-                                            <p class="text-slate-600 text-sm leading-relaxed mb-4">
-                                                نعم! بمجرد الضغط على <strong>"حفظ التغييرات"</strong>، سيتم تحديث متجرك فوراً للزوار.
-                                                نحن نستخدم تقنية (Client-Side Rendering) لضمان السرعة.
-                                            </p>
-                                        </div>
-                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -536,31 +554,7 @@ const generateStaticStoreHTML = (config: StoreConfig) => {
                                         <label class="block text-sm font-bold text-slate-600 mb-2">الشعار النصي (Tagline)</label>
                                         <input type="text" x-model="config.tagline" class="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all">
                                     </div>
-                                    <div>
-                                        <label class="block text-sm font-bold text-slate-600 mb-2">اللون الرئيسي</label>
-                                        <div class="flex items-center gap-3">
-                                            <input type="color" x-model="config.primaryColor" class="h-12 w-20 rounded cursor-pointer">
-                                            <input type="text" x-model="config.primaryColor" class="flex-1 border border-gray-300 rounded-lg px-4 py-3 uppercase font-mono">
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-bold text-slate-600 mb-2">شريط الإعلانات</label>
-                                        <input type="text" x-model="config.announcementBar" class="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all">
-                                    </div>
                                 </div>
-                                
-                                <h3 class="font-bold text-lg mb-6 text-slate-800 border-b pb-4 pt-4">تحسين محركات البحث (SEO)</h3>
-                                <div class="grid grid-cols-1 gap-6 mb-6">
-                                     <div>
-                                        <label class="block text-sm font-bold text-slate-600 mb-2">عنوان الصفحة (Page Title)</label>
-                                        <input type="text" x-model="config.seoTitle" placeholder="أفضل متجر لبيع..." class="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-indigo-500 outline-none">
-                                    </div>
-                                     <div>
-                                        <label class="block text-sm font-bold text-slate-600 mb-2">الكلمات المفتاحية (Keywords)</label>
-                                        <input type="text" x-model="config.seoKeywords" placeholder="تجارة, بيع, شراء, خصومات" class="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-indigo-500 outline-none">
-                                    </div>
-                                </div>
-
                                 <div class="flex justify-end">
                                     <button @click="saveChanges()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-xl font-bold shadow-lg transition-all flex items-center gap-2">
                                         <i data-lucide="save" class="w-4 h-4"></i> حفظ التغييرات
@@ -581,7 +575,10 @@ const generateStaticStoreHTML = (config: StoreConfig) => {
                             <div class="grid grid-cols-1 gap-4">
                                 <template x-for="(product, index) in config.products">
                                     <div class="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex flex-col md:flex-row gap-6 items-start animate-fade-in">
-                                        <div class="w-24 h-24 rounded-lg flex items-center justify-center text-3xl font-black text-black/10 shrink-0" :style="'background-color: ' + product.color" x-text="product.name.charAt(0)"></div>
+                                        <div class="w-24 h-24 rounded-lg flex items-center justify-center text-3xl font-black text-black/10 shrink-0 overflow-hidden relative" :style="'background-color: ' + product.color">
+                                             <img x-show="product.imageKeyword" :src="'https://source.unsplash.com/200x200/?' + (product.imageKeyword || 'product')" class="w-full h-full object-cover">
+                                             <span x-show="!product.imageKeyword" x-text="product.name.charAt(0)"></span>
+                                        </div>
                                         <div class="flex-1 w-full space-y-4">
                                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                 <input type="text" x-model="product.name" class="font-bold text-slate-800 border-b border-gray-200 focus:border-indigo-500 outline-none bg-transparent py-1" placeholder="اسم المنتج">
@@ -638,6 +635,7 @@ const generateStaticStoreHTML = (config: StoreConfig) => {
                 loginError: false,
                 activeTab: 'dashboard',
                 flashMessage: '',
+                activePolicy: null,
 
                 initApp() {
                     // Check URL hash for routing
@@ -708,7 +706,8 @@ const generateStaticStoreHTML = (config: StoreConfig) => {
                         name: 'منتج جديد',
                         price: '100',
                         description: 'وصف المنتج...',
-                        color: '#cbd5e1'
+                        color: '#cbd5e1',
+                        imageKeyword: 'product'
                     });
                 },
 
@@ -728,6 +727,24 @@ const generateStaticStoreHTML = (config: StoreConfig) => {
                     if (this.activeTab === 'guide') return 'دليل الاستخدام';
                     if (this.activeTab === 'products') return 'إدارة المنتجات';
                     return 'الإعدادات';
+                },
+
+                openPolicy(type) {
+                    this.activePolicy = type;
+                },
+
+                getPolicyTitle() {
+                    if(this.activePolicy === 'privacy') return 'سياسة الخصوصية';
+                    if(this.activePolicy === 'terms') return 'شروط الاستخدام';
+                    if(this.activePolicy === 'refund') return 'سياسة الاسترجاع';
+                    return '';
+                },
+
+                getPolicyContent() {
+                    if(this.activePolicy === 'privacy') return this.config.policies.privacy;
+                    if(this.activePolicy === 'terms') return this.config.policies.terms;
+                    if(this.activePolicy === 'refund') return this.config.policies.refund;
+                    return '';
                 }
             }
         }
@@ -739,12 +756,29 @@ const generateStaticStoreHTML = (config: StoreConfig) => {
 
 // --- Merchant Dashboard Component ---
 
-const Dashboard = ({ config, onBack }: { config: StoreConfig; onBack: () => void }) => {
+const Dashboard = ({ config, onBack, user }: { config: StoreConfig; onBack: () => void; user: UserProfile | null }) => {
   const [activeTab, setActiveTab] = useState("overview");
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
   
   const getWhatsAppLink = () => {
     const message = `مرحباً إيهاب،\nلقد قمت بإنشاء متجر جديد.\nالاسم: ${config.storeName}\nالدومين: ${config.subdomain}.ehab.shop\n`;
     return `https://wa.me/201011500753?text=${encodeURIComponent(message)}`;
+  };
+
+  const handleCloudSave = async () => {
+      if (!user) return;
+      setIsSaving(true);
+      setSaveStatus('idle');
+      const result = await saveStoreToSupabase(user.id, config);
+      setIsSaving(false);
+      if (result.success) {
+          setSaveStatus('success');
+          setTimeout(() => setSaveStatus('idle'), 3000);
+      } else {
+          console.error(result.error);
+          setSaveStatus('error');
+      }
   };
 
   const renderContent = () => {
@@ -799,8 +833,12 @@ const Dashboard = ({ config, onBack }: { config: StoreConfig; onBack: () => void
               <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                  {config.products.map((p, i) => (
                     <div key={i} className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden group hover:border-indigo-500/50 transition-colors">
-                       <div className="h-40 w-full flex items-center justify-center relative" style={{backgroundColor: p.color}}>
-                          <span className="text-4xl font-black text-black/20">{p.name.charAt(0)}</span>
+                       <div className="h-40 w-full flex items-center justify-center relative bg-slate-800 overflow-hidden">
+                          {p.imageKeyword ? (
+                              <img src={getProductImage(p.imageKeyword) || ""} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
+                          ) : (
+                              <span className="text-4xl font-black text-white/20">{p.name.charAt(0)}</span>
+                          )}
                           <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                              <button className="p-2 bg-white rounded-full text-slate-900 hover:bg-slate-200"><Settings className="w-4 h-4" /></button>
                           </div>
@@ -839,6 +877,24 @@ const Dashboard = ({ config, onBack }: { config: StoreConfig; onBack: () => void
                      </div>
                   </div>
                   
+                  {/* Database Info for Developer */}
+                  <div className="bg-slate-950 border border-indigo-500/20 rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-sm font-bold text-indigo-400 flex items-center gap-2"><Database className="w-4 h-4" /> إعداد قاعدة البيانات (للمطور)</h4>
+                          <span className="text-[10px] text-slate-500 bg-slate-900 px-2 py-1 rounded">SQL</span>
+                      </div>
+                      <p className="text-xs text-slate-400 mb-2">لتفعيل الحفظ السحابي، قم بتشغيل هذا الكود في Supabase SQL Editor:</p>
+                      <pre className="bg-black/50 p-3 rounded text-[10px] text-emerald-400 font-mono overflow-x-auto" dir="ltr">
+{`create table if not exists stores (
+  id uuid default uuid_generate_v4() primary key,
+  user_id uuid references auth.users(id) unique,
+  subdomain text unique,
+  config jsonb,
+  updated_at timestamp with time zone default timezone('utc'::text, now())
+);`}
+                      </pre>
+                  </div>
+
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div>
                         <label className="block text-slate-400 text-sm mb-2 font-bold">اسم المتجر</label>
@@ -856,6 +912,15 @@ const Dashboard = ({ config, onBack }: { config: StoreConfig; onBack: () => void
                   <div>
                      <label className="block text-slate-400 text-sm mb-2 font-bold">وصف المتجر (SEO)</label>
                      <textarea readOnly value={config.aboutUs} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-slate-300 focus:outline-none h-24 resize-none text-sm leading-relaxed"></textarea>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 bg-slate-950 p-4 rounded-xl border border-slate-800">
+                      <h4 className="text-sm font-bold text-white flex items-center gap-2"><Scale className="w-4 h-4 text-indigo-500" /> الصفحات القانونية (تم التوليد تلقائياً)</h4>
+                      <div className="flex gap-2">
+                          <span className="bg-slate-900 text-slate-400 text-xs px-3 py-1 rounded border border-slate-800">سياسة الخصوصية</span>
+                          <span className="bg-slate-900 text-slate-400 text-xs px-3 py-1 rounded border border-slate-800">شروط الاستخدام</span>
+                          <span className="bg-slate-900 text-slate-400 text-xs px-3 py-1 rounded border border-slate-800">سياسة الاسترجاع</span>
+                      </div>
                   </div>
                   
                   <div className="pt-6 border-t border-slate-800 flex justify-between items-center">
@@ -899,6 +964,19 @@ const Dashboard = ({ config, onBack }: { config: StoreConfig; onBack: () => void
                         <h3 className="text-slate-400 text-sm mb-1 font-medium">الطلبات الجديدة</h3>
                         <p className="text-3xl font-bold text-white tracking-tight">0</p>
                     </div>
+                </div>
+
+                {/* Cloud Save & Actions */}
+                <div className="flex justify-between items-center mb-8">
+                    <h3 className="text-xl font-bold text-white">الإجراءات السريعة</h3>
+                    <button 
+                        onClick={handleCloudSave} 
+                        disabled={isSaving}
+                        className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-sm transition-all ${saveStatus === 'success' ? 'bg-green-600 text-white' : saveStatus === 'error' ? 'bg-red-600 text-white' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}`}
+                    >
+                        {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                        {saveStatus === 'success' ? 'تم الحفظ!' : saveStatus === 'error' ? 'فشل الحفظ' : 'حفظ في السحابة'}
+                    </button>
                 </div>
 
                 {/* Activation Alert */}
@@ -945,7 +1023,10 @@ const Dashboard = ({ config, onBack }: { config: StoreConfig; onBack: () => void
                             {config.products.length > 0 ? config.products.slice(0, 3).map((p, i) => (
                                 <tr key={i} className="hover:bg-slate-800/50 transition-colors">
                                     <td className="p-4 flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center text-xs font-bold text-black/50" style={{backgroundColor: p.color}}>{p.name.charAt(0)}</div>
+                                        <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center text-xs font-bold text-black/50 overflow-hidden" style={{backgroundColor: p.color}}>
+                                            {p.imageKeyword && <img src={getProductImage(p.imageKeyword) || ""} className="w-full h-full object-cover" />}
+                                            {!p.imageKeyword && p.name.charAt(0)}
+                                        </div>
                                         <span className="font-bold text-slate-200">{p.name}</span>
                                     </td>
                                     <td className="p-4 text-slate-400 font-mono">{p.price} {config.currency}</td>
@@ -1053,6 +1134,25 @@ const PublishModal = ({ config, onClose, onSuccess }: { config: StoreConfig; onC
       setStep(prev => prev + 1);
   }
 
+  const handleSendToAgency = () => {
+        // Prepare the message for WhatsApp
+        const publicLink = `https://${AWS_CONFIG.BUCKET_NAME}.s3.${AWS_CONFIG.REGION}.amazonaws.com/${desiredSubdomain}.html`;
+        const adminLink = `${publicLink}#/admin`;
+        
+        const message = `🚀 *طلب نشر متجر جديد - Ehab.Shop Agency*\n\n` +
+            `👤 *بيانات العميل:*\n` +
+            `- الهاتف: ${clientPhone}\n\n` +
+            `🏬 *بيانات المتجر:*\n` +
+            `- الاسم: ${config.storeName}\n` +
+            `- الدومين المطلوب: ${desiredSubdomain}.ehab.shop\n` +
+            `- كلمة مرور الإدارة: ${adminPassword}\n\n` +
+            `🛠 *الإجراء المطلوب:*\n` +
+            `يرجى ربط الدومين الفرعي وتفعيل المتجر.\n\n` +
+            `(تم إرفاق ملف المتجر في المحادثة)`;
+
+        window.open(`https://wa.me/${OWNER_PHONE}?text=${encodeURIComponent(message)}`, '_blank');
+  };
+
   // --- AWS Upload Logic ---
   const uploadStoreToAWS = async () => {
       // التحقق من وجود مفاتيح الاتصال
@@ -1118,15 +1218,9 @@ const PublishModal = ({ config, onClose, onSuccess }: { config: StoreConfig; onC
     setTimeout(() => {
       setUploadStatus(uploaded ? "success" : "error"); 
       
-      // في حالة النجاح، الرابط هو رابط البكت المباشر أو CloudFront إذا تم إعداده
-      // سأفترض هنا رابط S3 المباشر للتجربة
-      const publicLink = `https://${AWS_CONFIG.BUCKET_NAME}.s3.${AWS_CONFIG.REGION}.amazonaws.com/${desiredSubdomain}.html`;
-      const adminLink = `${publicLink}#/admin`;
-      
-      // Send WhatsApp Notification to Owner
-      const message = `🚀 *New Order Alert (AWS S3 Upload)*\n\nStore: ${config.storeName}\nSubdomain: ${desiredSubdomain}\nClient Phone: ${clientPhone}\n\n🔐 *Admin Access:*\nURL: ${adminLink}\nPass: ${adminPassword}\n\nStatus: ${uploaded ? 'Uploaded to AWS S3 ✅' : 'Upload Failed (Keys missing?) ❌'}`;
-      const waLink = `https://wa.me/${OWNER_PHONE}?text=${encodeURIComponent(message)}`;
-      window.open(waLink, '_blank');
+      if (uploaded) {
+          // If upload success, prompt user to send whatsapp
+      }
       
       // onSuccess(); // Removed to allow user to see the success screen
     }, 4000); 
@@ -1288,7 +1382,7 @@ const PublishModal = ({ config, onClose, onSuccess }: { config: StoreConfig; onC
                     {uploadStatus === 'error' && <AlertCircle className="absolute inset-0 m-auto w-10 h-10 text-red-400" />}
                 </div>
                 <h3 className="text-xl font-bold text-white mb-6">
-                    {uploadStatus === 'uploading' ? 'جاري الرفع إلى AWS S3...' : (uploadStatus === 'success' ? 'تم النشر بنجاح! 🎉' : 'فشل الاتصال بـ AWS')}
+                    {uploadStatus === 'uploading' ? 'جاري الرفع إلى AWS S3...' : (uploadStatus === 'success' ? 'تم تجهيز المتجر للنشر! 🎉' : 'فشل الاتصال بـ AWS')}
                 </h3>
                 
                 {uploadStatus === 'uploading' ? (
@@ -1308,39 +1402,31 @@ const PublishModal = ({ config, onClose, onSuccess }: { config: StoreConfig; onC
                     </div>
                 ) : (
                     <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-6 text-emerald-100 text-sm leading-relaxed animate-fade-in text-right">
-                        <p className="mb-4">
-                           {uploadStatus === 'success' ? 'شكراً لك! لقد تم رفع ملفات المتجر بنجاح.' : 'لم نتمكن من الرفع لعدم وجود مفاتيح AWS، ولكن تم حفظ الملف محلياً.'}
+                        <p className="mb-4 text-center font-bold">
+                           تبقت خطوة واحدة فقط! 🚀
                         </p>
-                        <div className="bg-slate-950 p-4 rounded-lg border border-emerald-500/30 mb-4">
-                            <p className="text-xs text-slate-400 mb-1">رابط لوحة التحكم:</p>
-                            <p className="text-emerald-400 font-mono text-xs dir-ltr">https://{desiredSubdomain}.ehab.shop/#/admin</p>
-                            <div className="mt-2 pt-2 border-t border-slate-800">
-                                <p className="text-xs text-slate-400 mb-1">كلمة المرور:</p>
-                                <p className="text-white font-mono font-bold text-lg tracking-wider">{adminPassword}</p>
-                            </div>
-                        </div>
-                        <p className="mt-4 text-xs text-slate-400 text-center">
-                           تم تحميل نسخة احتياطية (HTML) على جهازك.
+                        <p className="mb-4 text-slate-300">
+                           لقد تم إنشاء ملف المتجر (HTML) وتكوينه بنجاح. لإكمال عملية النشر على الدومين <span className="font-mono bg-black/20 px-1 rounded">{desiredSubdomain}.ehab.shop</span>، يجب عليك إرسال بيانات الاتصال إلى إدارة الوكالة.
                         </p>
                         
                         {uploadStatus === 'success' && (
                             <div className="mt-6 flex flex-col gap-3">
+                                <button 
+                                    onClick={handleSendToAgency}
+                                    className="bg-[#25D366] text-white px-6 py-3 rounded-full font-bold shadow-lg hover:scale-105 transition-transform flex items-center justify-center gap-2"
+                                >
+                                    <Phone className="w-5 h-5 fill-white" />
+                                    إرسال الطلب عبر واتساب
+                                </button>
                                 <a 
                                     href={getStoreUrl()}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="bg-white text-emerald-600 px-6 py-3 rounded-full font-bold shadow-lg hover:scale-105 transition-transform flex items-center justify-center gap-2"
+                                    className="bg-slate-800 text-slate-300 px-6 py-3 rounded-full font-bold hover:bg-slate-700 transition-colors flex items-center justify-center gap-2 text-xs"
                                 >
                                     <ExternalLink className="w-4 h-4" />
-                                    زيارة المتجر الحي
+                                    (اختياري) معاينة نسخة S3 التجريبية
                                 </a>
-                                <button 
-                                    onClick={() => navigator.clipboard.writeText(getStoreUrl())}
-                                    className="bg-slate-800 text-slate-300 px-6 py-3 rounded-full font-bold hover:bg-slate-700 transition-colors flex items-center justify-center gap-2"
-                                >
-                                    <Copy className="w-4 h-4" />
-                                    نسخ الرابط
-                                </button>
                             </div>
                         )}
                     </div>
@@ -1598,6 +1684,8 @@ const App = () => {
           if (session?.user) {
               updateUserProfile(session.user);
               setIsAuthenticated(true);
+              // Auto-load store from cloud if logged in
+              loadStoreFromCloud(session.user.id);
           }
       });
 
@@ -1609,6 +1697,8 @@ const App = () => {
           if (session?.user) {
               updateUserProfile(session.user);
               setIsAuthenticated(true);
+              // Auto-load store from cloud if logged in
+              loadStoreFromCloud(session.user.id);
           } else {
               setIsAuthenticated(false);
               setCurrentUser(null);
@@ -1625,6 +1715,14 @@ const App = () => {
           name: user.user_metadata?.full_name || 'مستخدم',
           phone: user.user_metadata?.phone
       });
+  };
+
+  const loadStoreFromCloud = async (userId: string) => {
+      const config = await loadStoreFromSupabase(userId);
+      if (config) {
+          setStoreConfig(config);
+          setMessages(prev => [...prev, {role: "model", content: "تم استعادة تصميم متجرك المحفوظ بنجاح! 📂"}]);
+      }
   };
 
   useEffect(() => {
@@ -1682,6 +1780,7 @@ const App = () => {
           testimonials: jsonResponse.testimonials?.length > 0 ? jsonResponse.testimonials : prev.testimonials,
           faq: jsonResponse.faq?.length > 0 ? jsonResponse.faq : prev.faq,
           blogPosts: jsonResponse.blogPosts?.length > 0 ? jsonResponse.blogPosts : prev.blogPosts,
+          policies: jsonResponse.policies || prev.policies, // Update policies
           subdomain: jsonResponse.suggestedSubdomain || prev.subdomain
         }));
       }
@@ -1721,7 +1820,7 @@ const App = () => {
   }
 
   if (appMode === "dashboard") {
-    return <Dashboard config={storeConfig} onBack={() => setAppMode("builder")} />;
+    return <Dashboard config={storeConfig} onBack={() => setAppMode("builder")} user={currentUser} />;
   }
 
   return (
@@ -1910,7 +2009,7 @@ const App = () => {
               
               <div className={`hidden md:flex gap-8 text-sm font-bold text-slate-600`}>
                 <a href="#" className="hover:text-black transition-colors">الرئيسية</a>
-                <a href="#" className="hover:text-black transition-colors">المنتجات</a>
+                <a href="#products" className="hover:text-black transition-colors">المنتجات</a>
                 <a href="#blog" className="hover:text-black transition-colors">المدونة</a>
                 <a href="#contact" className="hover:text-black transition-colors">اتصل بنا</a>
               </div>
@@ -2025,12 +2124,20 @@ const App = () => {
                             style={{ backgroundColor: product.color || "#e2e8f0" }}
                             onClick={() => setQuickViewProduct(product)}
                           >
-                             <span className="text-6xl font-black text-black/10 select-none scale-150 group-hover:scale-100 transition-transform duration-500">
-                                {product.name.substring(0,2)}
-                             </span>
+                             {product.imageKeyword ? (
+                                 <img 
+                                    src={`https://source.unsplash.com/400x300/?${product.imageKeyword}`} 
+                                    alt={product.name} 
+                                    className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                                 />
+                             ) : (
+                                 <span className="text-6xl font-black text-black/10 select-none scale-150 group-hover:scale-100 transition-transform duration-500">
+                                    {product.name.substring(0,2)}
+                                 </span>
+                             )}
                              
                              {/* Quick Actions Overlay */}
-                             <div className="absolute inset-x-0 bottom-0 p-4 translate-y-full group-hover:translate-y-0 transition-transform duration-300 flex justify-center pb-6">
+                             <div className="absolute inset-x-0 bottom-0 p-4 translate-y-full group-hover:translate-y-0 transition-transform duration-300 flex justify-center pb-6 bg-gradient-to-t from-black/50 to-transparent">
                                 <button className="bg-white text-slate-900 px-6 py-2 rounded-full font-bold shadow-lg text-sm hover:scale-105 transition-transform flex items-center gap-2">
                                     <Eye className="w-4 h-4" /> نظرة سريعة
                                 </button>
@@ -2182,140 +2289,67 @@ const App = () => {
                 </section>
 
                 {/* Footer */}
-                <footer className="bg-slate-50 border-t border-slate-200 pt-16 pb-8 px-6" dir="rtl">
-                <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between gap-12 mb-12">
-                    <div className="text-right max-w-xs">
-                        <div className="flex items-center gap-2 mb-4 text-slate-900 font-bold text-xl">
-                            <Store className="w-6 h-6" />
-                            {storeConfig.storeName}
+                <footer className="bg-slate-900 text-white py-16 px-4 mt-12 border-t border-slate-800">
+                    <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between gap-12 mb-12">
+                        <div className="text-right max-w-xs">
+                            <div className="flex items-center gap-2 mb-4 text-white font-bold text-xl">
+                                <Store className="w-6 h-6" />
+                                <span style={{ color: storeConfig.primaryColor }}>{storeConfig.storeName}</span>
+                            </div>
+                            <p className="text-sm text-slate-500 leading-relaxed mb-6">
+                                {storeConfig.aboutUs.substring(0, 100)}...
+                            </p>
                         </div>
-                        <p className="text-sm text-slate-500 leading-relaxed mb-6">
-                            {storeConfig.aboutUs.substring(0, 100)}...
-                        </p>
-                        <div className="flex gap-4">
-                            <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center hover:bg-slate-300 cursor-pointer transition-colors"><Twitter className="w-4 h-4 text-slate-600"/></div>
-                            <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center hover:bg-slate-300 cursor-pointer transition-colors"><Instagram className="w-4 h-4 text-slate-600"/></div>
-                            <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center hover:bg-slate-300 cursor-pointer transition-colors"><Facebook className="w-4 h-4 text-slate-600"/></div>
-                        </div>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-12">
-                        <div>
-                            <h4 className="font-bold text-slate-900 mb-4">روابط سريعة</h4>
-                            <ul className="space-y-2 text-sm text-slate-500">
-                                <li><a href="#" className="hover:text-indigo-600">الرئيسية</a></li>
-                                <li><a href="#" className="hover:text-indigo-600">من نحن</a></li>
-                                <li><a href="#" className="hover:text-indigo-600">المنتجات</a></li>
-                                <li><a href="#" className="hover:text-indigo-600">اتصل بنا</a></li>
-                            </ul>
-                        </div>
-                        <div>
-                            <h4 className="font-bold text-slate-900 mb-4">الدعم الفني</h4>
-                            <ul className="space-y-2 text-sm text-slate-500">
-                                <li><a href="#" className="hover:text-indigo-600">الأسئلة الشائعة</a></li>
-                                <li><a href="#" className="hover:text-indigo-600">سياسة الشحن</a></li>
-                                <li><a href="#" className="hover:text-indigo-600">الإرجاع والاستبدال</a></li>
-                            </ul>
+                        
+                        <div className="grid grid-cols-2 gap-12">
+                            <div>
+                                <h4 className="font-bold text-white mb-4">روابط سريعة</h4>
+                                <ul className="space-y-2 text-sm text-slate-400">
+                                    <li><a href="#" className="hover:text-white">الرئيسية</a></li>
+                                    <li><a href="#products" className="hover:text-white">المنتجات</a></li>
+                                    <li><a href="#contact" className="hover:text-white">اتصل بنا</a></li>
+                                </ul>
+                            </div>
+                            <div>
+                                <h4 className="font-bold text-white mb-4">الدعم والسياسات</h4>
+                                <ul className="space-y-2 text-sm text-slate-400">
+                                    <li><button className="hover:text-white">سياسة الخصوصية</button></li>
+                                    <li><button className="hover:text-white">شروط الاستخدام</button></li>
+                                    <li><button className="hover:text-white">سياسة الاسترجاع</button></li>
+                                </ul>
+                            </div>
                         </div>
                     </div>
-                </div>
-                <div className="max-w-6xl mx-auto border-t border-slate-200 pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-xs text-slate-400">
-                        <p>© 2024 {storeConfig.storeName}. جميع الحقوق محفوظة.</p>
-                        <p>Designed by Ehab.Shop Agency</p>
-                </div>
+                    <div className="max-w-6xl mx-auto border-t border-slate-800 pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-xs text-slate-500">
+                            <p>© 2024 {storeConfig.storeName}. جميع الحقوق محفوظة.</p>
+                            <div className="flex gap-4">
+                                <button onClick={() => setAppMode("dashboard")} className="hover:text-white">مسؤول المتجر</button>
+                            </div>
+                    </div>
                 </footer>
             </div>
-
-            {/* Quick View Modal */}
-            {quickViewProduct && (
-                <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in" dir="rtl">
-                    <div className="bg-white rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl relative flex flex-col md:flex-row h-[500px] md:h-auto">
-                        <button 
-                            onClick={() => setQuickViewProduct(null)}
-                            className="absolute top-4 left-4 p-2 bg-slate-100 rounded-full hover:bg-slate-200 z-10"
-                        >
-                            <X className="w-5 h-5 text-slate-600" />
-                        </button>
-                        <div className="w-full md:w-1/2 h-64 md:h-auto flex items-center justify-center" style={{ backgroundColor: quickViewProduct.color }}>
-                            <span className="text-8xl font-black text-black/10">{quickViewProduct.name.charAt(0)}</span>
-                        </div>
-                        <div className="w-full md:w-1/2 p-8 flex flex-col justify-center">
-                            <h3 className="text-2xl font-bold text-slate-900 mb-2">{quickViewProduct.name}</h3>
-                            <div className="text-xl font-bold text-emerald-600 mb-4">{quickViewProduct.price} {storeConfig.currency}</div>
-                            <p className="text-slate-500 mb-8 leading-relaxed text-sm">{quickViewProduct.description}</p>
-                            <button 
-                                onClick={() => {
-                                    addToCart(quickViewProduct);
-                                    setQuickViewProduct(null);
-                                }}
-                                className="w-full py-4 rounded-xl font-bold text-white shadow-lg transition-transform active:scale-95"
-                                style={{ backgroundColor: storeConfig.primaryColor }}
-                            >
-                                إضافة للسلة
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Cart Drawer */}
-            <div className={`absolute top-0 right-0 bottom-0 w-80 bg-white shadow-2xl z-50 transform transition-transform duration-300 ${isCartOpen ? 'translate-x-0' : 'translate-x-full'}`} dir="rtl">
-                <div className="p-6 h-full flex flex-col">
-                    <div className="flex items-center justify-between mb-8">
-                        <h3 className="text-xl font-bold text-slate-900">سلة المشتريات ({cartItems.length})</h3>
-                        <button onClick={() => setIsCartOpen(false)}><X className="w-6 h-6 text-slate-500" /></button>
-                    </div>
-                    
-                    <div className="flex-1 overflow-y-auto space-y-4">
-                        {cartItems.length === 0 ? (
-                            <div className="text-center text-slate-400 mt-20">
-                                <ShoppingBag className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                                <p>السلة فارغة</p>
-                            </div>
-                        ) : (
-                            cartItems.map((item, i) => (
-                                <div key={i} className="flex gap-4 p-3 bg-slate-50 rounded-xl border border-slate-100">
-                                    <div className="w-16 h-16 rounded-lg shrink-0" style={{ backgroundColor: item.color }}></div>
-                                    <div>
-                                        <h4 className="font-bold text-slate-900 text-sm">{item.name}</h4>
-                                        <p className="text-emerald-600 text-sm font-bold">{item.price} {storeConfig.currency}</p>
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </div>
-                    
-                    <div className="border-t border-slate-100 pt-6 mt-4">
-                         <div className="flex justify-between font-bold text-lg mb-4 text-slate-900">
-                             <span>المجموع</span>
-                             <span>--- {storeConfig.currency}</span>
-                         </div>
-                         <button className="w-full py-4 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition-colors">
-                             إتمام الطلب (تجريبي)
-                         </button>
-                    </div>
-                </div>
-            </div>
-
-            {/* --- END STORE INNER CONTENT --- */}
           </div>
         </div>
-      </div>
 
-      {/* Publish Modal */}
-      {showPublishModal && (
-        <PublishModal 
-          config={storeConfig} 
-          onClose={() => setShowPublishModal(false)}
-          onSuccess={() => {
-            setShowPublishModal(false);
-            setAppMode("dashboard");
-          }}
-        />
-      )}
+        {/* Publish Modal */}
+        {showPublishModal && (
+            <PublishModal 
+                config={storeConfig} 
+                onClose={() => setShowPublishModal(false)}
+                onSuccess={() => {
+                   setShowPublishModal(false);
+                   // Show success notification or similar
+                }} 
+            />
+        )}
+        
+      </div>
     </div>
   );
 };
 
-const root = createRoot(document.getElementById("root")!);
-root.render(<App />);
+const rootElement = document.getElementById("root");
+if (rootElement) {
+  const root = createRoot(rootElement);
+  root.render(<App />);
+}
