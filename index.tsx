@@ -8,15 +8,19 @@ import {
   ChevronDown, ChevronUp, Instagram, Facebook, Twitter, Phone, MapPin,
   HelpCircle, Eye, MousePointerClick, LayoutDashboard, BarChart3, 
   Users, Package, Settings, LogOut, TrendingUp, AlertCircle, FileText,
-  Search, Filter, MoreHorizontal, Server, Lock, Database, Key, Network, Download, FileCode, Github, ExternalLink, BookOpen, Cloud
+  Search, Filter, MoreHorizontal, Server, Lock, Database, Key, Network, Download, FileCode, Github, ExternalLink, BookOpen, Cloud, UserCheck, User, LogIn, ArrowRight, Loader2
 } from "lucide-react";
 import Markdown from "react-markdown";
 // استيراد مكتبة AWS SDK من CDN للعمل داخل المتصفح مباشرة
 import { S3Client, PutObjectCommand } from "https://esm.sh/@aws-sdk/client-s3";
+// استيراد مكتبة Supabase
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// --- CONFIGURATION (AWS REAL CONNECTION) ---
-// ⚠️ تحذير: تم وضع المفاتيح هنا بناءً على طلبك للتجربة المباشرة.
-// يرجى الحذر من نشر هذا الكود علناً لأن المفاتيح حساسة.
+// --- CONFIGURATION (AWS & SUPABASE) ---
+
+// 🔴 هام جداً: قم بوضع بيانات SUPABASE الخاصة بك هنا
+const SUPABASE_URL = "YOUR_SUPABASE_PROJECT_URL"; // مثال: https://xyz.supabase.co
+const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY"; // المفتاح الطويل الذي يبدأ بـ eyJ...
 
 const AWS_CONFIG = {
     REGION: "us-east-1",
@@ -26,6 +30,40 @@ const AWS_CONFIG = {
 };
 
 const OWNER_PHONE = "201011500753"; 
+
+// --- Safe Supabase Initialization ---
+// هذه الدالة تمنع توقف التطبيق إذا كانت الروابط غير صحيحة
+const createSafeSupabaseClient = () => {
+    const isConfigured = SUPABASE_URL && SUPABASE_URL.startsWith("http") && SUPABASE_ANON_KEY && SUPABASE_ANON_KEY.length > 20 && !SUPABASE_URL.includes("YOUR_SUPABASE");
+    
+    if (isConfigured) {
+        try {
+            return createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        } catch (e) {
+            console.error("Supabase Init Error:", e);
+        }
+    }
+
+    // Mock client fallback (نسخة وهمية ليعمل التطبيق بدون اتصال)
+    return {
+        auth: {
+            getSession: async () => ({ data: { session: null }, error: null }),
+            onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
+            signUp: async () => {
+                alert("⚠️ الرجاء إعداد Supabase في الكود أولاً!\n(SUPABASE_URL & SUPABASE_ANON_KEY)");
+                return { data: null, error: { message: "Configuration missing" } };
+            },
+            signInWithPassword: async () => {
+                alert("⚠️ الرجاء إعداد Supabase في الكود أولاً!\n(SUPABASE_URL & SUPABASE_ANON_KEY)");
+                return { data: null, error: { message: "Configuration missing" } };
+            },
+            signOut: async () => {},
+        }
+    };
+};
+
+const supabase = createSafeSupabaseClient();
+const isSupabaseConfigured = SUPABASE_URL && SUPABASE_URL.startsWith("http") && !SUPABASE_URL.includes("YOUR_SUPABASE");
 
 // --- Types ---
 
@@ -87,6 +125,13 @@ interface Message {
   role: "user" | "model" | "system";
   content: string;
   isThinking?: boolean;
+}
+
+interface UserProfile {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
 }
 
 // --- Initial State ---
@@ -207,7 +252,6 @@ const SYSTEM_INSTRUCTION = `
 `;
 
 // --- ADVANCED Store Exporter Function (SPA + CMS) ---
-// This creates a single file containing logic for both the Storefront AND the Admin Dashboard.
 const generateStaticStoreHTML = (config: StoreConfig) => {
   const safeConfig = { 
     ...config, 
@@ -689,9 +733,845 @@ const generateStaticStoreHTML = (config: StoreConfig) => {
 };
 
 
-// --- Components ---
+// --- Merchant Dashboard Component ---
+
+const Dashboard = ({ config, onBack }: { config: StoreConfig; onBack: () => void }) => {
+  const [activeTab, setActiveTab] = useState("overview");
+  
+  const getWhatsAppLink = () => {
+    const message = `مرحباً إيهاب،\nلقد قمت بإنشاء متجر جديد.\nالاسم: ${config.storeName}\nالدومين: ${config.subdomain}.ehab.shop\n`;
+    return `https://wa.me/201011500753?text=${encodeURIComponent(message)}`;
+  };
+
+  const renderContent = () => {
+    switch (activeTab) {
+      case "orders":
+        return (
+           <div className="p-8 max-w-6xl mx-auto animate-fade-in">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold text-white">الطلبات</h2>
+                <div className="flex gap-2">
+                    <button className="bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-sm hover:bg-slate-700 flex items-center gap-2"><Filter className="w-4 h-4" /> تصفية</button>
+                    <button className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-indigo-500">تصدير CSV</button>
+                </div>
+              </div>
+              <div className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden">
+                <table className="w-full text-right text-sm">
+                   <thead className="bg-slate-950 text-slate-500 border-b border-slate-800">
+                      <tr>
+                        <th className="p-4">رقم الطلب</th>
+                        <th className="p-4">العميل</th>
+                        <th className="p-4">التاريخ</th>
+                        <th className="p-4">الحالة</th>
+                        <th className="p-4">الإجمالي</th>
+                        <th className="p-4"></th>
+                      </tr>
+                   </thead>
+                   <tbody className="divide-y divide-slate-800 text-slate-300">
+                      {[1001, 1002, 1003, 1004].map((id) => (
+                        <tr key={id} className="hover:bg-slate-800/50 transition-colors">
+                           <td className="p-4 font-mono text-indigo-400">#{id}</td>
+                           <td className="p-4">عميل افتراضي</td>
+                           <td className="p-4 text-slate-500">منذ ساعتين</td>
+                           <td className="p-4"><span className="bg-yellow-500/10 text-yellow-500 px-2 py-1 rounded-md text-xs border border-yellow-500/20">قيد الانتظار</span></td>
+                           <td className="p-4 font-bold">0.00 {config.currency}</td>
+                           <td className="p-4 text-center text-slate-500 hover:text-white cursor-pointer"><MoreHorizontal className="w-4 h-4 mx-auto"/></td>
+                        </tr>
+                      ))}
+                   </tbody>
+                </table>
+              </div>
+           </div>
+        );
+      case "products":
+        return (
+           <div className="p-8 max-w-6xl mx-auto animate-fade-in">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold text-white">المنتجات ({config.products.length})</h2>
+                <button className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-emerald-500 flex items-center gap-2">
+                    <Package className="w-4 h-4" /> إضافة منتج
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                 {config.products.map((p, i) => (
+                    <div key={i} className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden group hover:border-indigo-500/50 transition-colors">
+                       <div className="h-40 w-full flex items-center justify-center relative" style={{backgroundColor: p.color}}>
+                          <span className="text-4xl font-black text-black/20">{p.name.charAt(0)}</span>
+                          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                             <button className="p-2 bg-white rounded-full text-slate-900 hover:bg-slate-200"><Settings className="w-4 h-4" /></button>
+                          </div>
+                          {p.tag && <span className="absolute top-2 right-2 bg-black/50 text-white text-[10px] px-2 py-0.5 rounded backdrop-blur-sm">{p.tag}</span>}
+                       </div>
+                       <div className="p-4">
+                          <h3 className="font-bold text-white truncate text-sm mb-1">{p.name}</h3>
+                          <div className="flex justify-between items-center">
+                             <span className="text-slate-400 text-xs font-mono">{p.price} {config.currency}</span>
+                             <span className="flex h-2 w-2 relative">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                             </span>
+                          </div>
+                       </div>
+                    </div>
+                 ))}
+                 <button className="bg-slate-900/50 rounded-xl border border-dashed border-slate-700 flex flex-col items-center justify-center text-slate-500 hover:text-white hover:border-slate-500 hover:bg-slate-800 transition-all min-h-[200px]">
+                    <Package className="w-8 h-8 mb-2 opacity-50" />
+                    <span className="text-sm font-bold">منتج جديد</span>
+                 </button>
+              </div>
+           </div>
+        );
+      case "settings":
+         return (
+            <div className="p-8 max-w-4xl mx-auto animate-fade-in">
+               <h2 className="text-2xl font-bold mb-6 text-white">إعدادات المتجر</h2>
+               <div className="bg-slate-900 rounded-xl border border-slate-800 p-8 space-y-8">
+                  <div>
+                     <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Globe className="w-5 h-5 text-indigo-500"/> النطاق</h3>
+                     <div className="flex items-center gap-2 bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-slate-300">
+                        <span className="text-emerald-500"><CheckCircle className="w-4 h-4" /></span>
+                        {config.subdomain}.ehab.shop
+                        <span className="mr-auto text-xs text-slate-500 bg-slate-800 px-2 py-1 rounded">نشط</span>
+                     </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div>
+                        <label className="block text-slate-400 text-sm mb-2 font-bold">اسم المتجر</label>
+                        <input type="text" value={config.storeName} readOnly className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-slate-300 focus:outline-none focus:border-indigo-500" />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 text-sm mb-2 font-bold">لون الهوية</label>
+                        <div className="flex items-center gap-3 bg-slate-950 border border-slate-700 rounded-lg p-2 pr-4">
+                            <div className="w-8 h-8 rounded shadow-sm" style={{backgroundColor: config.primaryColor}}></div>
+                            <span className="text-slate-500 font-mono text-sm">{config.primaryColor}</span>
+                        </div>
+                      </div>
+                  </div>
+
+                  <div>
+                     <label className="block text-slate-400 text-sm mb-2 font-bold">وصف المتجر (SEO)</label>
+                     <textarea readOnly value={config.aboutUs} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-slate-300 focus:outline-none h-24 resize-none text-sm leading-relaxed"></textarea>
+                  </div>
+                  
+                  <div className="pt-6 border-t border-slate-800 flex justify-between items-center">
+                     <span className="text-xs text-slate-500">آخر تحديث: قبل دقيقة</span>
+                     <button className="py-2 px-6 bg-red-500/10 text-red-500 border border-red-500/20 rounded-lg hover:bg-red-500/20 transition-colors text-sm font-bold">
+                        حذف المتجر
+                     </button>
+                  </div>
+               </div>
+            </div>
+         );
+      default:
+        // Overview
+        return (
+            <main className="p-8 max-w-6xl mx-auto animate-fade-in">
+                {/* Stats Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                    <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 relative overflow-hidden">
+                         <div className="absolute -right-6 -top-6 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl"></div>
+                        <div className="flex justify-between items-start mb-4 relative z-10">
+                            <div className="p-2 bg-emerald-500/10 rounded-lg"><TrendingUp className="w-5 h-5 text-emerald-500" /></div>
+                            <span className="text-xs text-emerald-500 font-bold bg-emerald-500/10 px-2 py-1 rounded-full">+12%</span>
+                        </div>
+                        <h3 className="text-slate-400 text-sm mb-1 font-medium">إجمالي المبيعات (تجريبي)</h3>
+                        <p className="text-3xl font-bold text-white tracking-tight">0.00 <span className="text-lg text-slate-500 font-normal">{config.currency}</span></p>
+                    </div>
+                    <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 relative overflow-hidden">
+                        <div className="absolute -right-6 -top-6 w-24 h-24 bg-blue-500/5 rounded-full blur-2xl"></div>
+                        <div className="flex justify-between items-start mb-4 relative z-10">
+                            <div className="p-2 bg-blue-500/10 rounded-lg"><Users className="w-5 h-5 text-blue-500" /></div>
+                            <span className="text-xs text-blue-500 font-bold bg-blue-500/10 px-2 py-1 rounded-full">+5%</span>
+                        </div>
+                        <h3 className="text-slate-400 text-sm mb-1 font-medium">الزيارات الحالية</h3>
+                        <p className="text-3xl font-bold text-white tracking-tight">1</p>
+                    </div>
+                    <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 relative overflow-hidden">
+                        <div className="absolute -right-6 -top-6 w-24 h-24 bg-purple-500/5 rounded-full blur-2xl"></div>
+                        <div className="flex justify-between items-start mb-4 relative z-10">
+                            <div className="p-2 bg-purple-500/10 rounded-lg"><Package className="w-5 h-5 text-purple-500" /></div>
+                        </div>
+                        <h3 className="text-slate-400 text-sm mb-1 font-medium">الطلبات الجديدة</h3>
+                        <p className="text-3xl font-bold text-white tracking-tight">0</p>
+                    </div>
+                </div>
+
+                {/* Activation Alert */}
+                <div className="bg-gradient-to-r from-indigo-900/40 to-slate-900 border border-indigo-500/20 rounded-2xl p-8 mb-8 relative overflow-hidden shadow-2xl">
+                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-500 animate-pulse"></div>
+                    <div className="flex flex-col md:flex-row items-center justify-between gap-6 relative z-10">
+                        <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                                <h3 className="text-xl font-bold text-white">متجرك جاهز للإطلاق! 🚀</h3>
+                            </div>
+                            <p className="text-slate-400 text-sm leading-relaxed max-w-xl">
+                                لقد تم حجز الدومين <span className="text-indigo-400 font-mono bg-indigo-500/10 px-2 py-0.5 rounded">{config.subdomain}.ehab.shop</span> بنجاح.
+                                للبدء في استقبال الطلبات الحقيقية وتفعيل بوابات الدفع، يجب ربط المتجر بحسابك التجاري.
+                            </p>
+                        </div>
+                        <a 
+                            href={getWhatsAppLink()}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="bg-[#25D366] hover:bg-[#20bd5a] text-white px-8 py-4 rounded-xl font-bold flex items-center gap-3 shadow-lg shadow-green-900/20 transition-all transform hover:-translate-y-1 whitespace-nowrap group"
+                        >
+                            <Phone className="w-5 h-5 fill-current group-hover:animate-bounce" />
+                            تفعيل المتجر الآن
+                        </a>
+                    </div>
+                </div>
+
+                {/* Recent Products Preview */}
+                <div className="bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden">
+                    <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                        <h3 className="font-bold text-lg flex items-center gap-2"><Sparkles className="w-4 h-4 text-yellow-500"/> المنتجات المضافة حديثاً</h3>
+                        <button onClick={() => setActiveTab("products")} className="text-sm text-indigo-400 hover:text-indigo-300 font-medium hover:underline">عرض الكل</button>
+                    </div>
+                    <table className="w-full text-right text-sm">
+                        <thead className="bg-slate-950 text-slate-500">
+                            <tr>
+                                <th className="p-4 font-medium">المنتج</th>
+                                <th className="p-4 font-medium">السعر</th>
+                                <th className="p-4 font-medium">الحالة</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800">
+                            {config.products.length > 0 ? config.products.slice(0, 3).map((p, i) => (
+                                <tr key={i} className="hover:bg-slate-800/50 transition-colors">
+                                    <td className="p-4 flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center text-xs font-bold text-black/50" style={{backgroundColor: p.color}}>{p.name.charAt(0)}</div>
+                                        <span className="font-bold text-slate-200">{p.name}</span>
+                                    </td>
+                                    <td className="p-4 text-slate-400 font-mono">{p.price} {config.currency}</td>
+                                    <td className="p-4"><span className="bg-emerald-500/10 text-emerald-500 px-2 py-1 rounded text-xs font-bold border border-emerald-500/20">نشط</span></td>
+                                </tr>
+                            )) : (
+                                <tr>
+                                    <td colSpan={3} className="p-8 text-center text-slate-500">لا توجد منتجات بعد</td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </main>
+        );
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans flex overflow-hidden" dir="rtl">
+        {/* Sidebar */}
+        <div className="w-72 bg-slate-900 border-l border-slate-800 flex flex-col shadow-2xl z-20">
+            <div className="p-6 border-b border-slate-800 flex items-center gap-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-xl flex items-center justify-center font-bold text-xl shadow-lg shadow-indigo-500/20">E</div>
+                <div>
+                    <span className="font-bold text-lg block">لوحة التاجر</span>
+                    <span className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Pro Account</span>
+                </div>
+            </div>
+            
+            <nav className="p-4 space-y-2 flex-1">
+                <button onClick={() => setActiveTab("overview")} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${activeTab === "overview" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/20" : "text-slate-400 hover:text-white hover:bg-slate-800"}`}>
+                    <LayoutDashboard className="w-5 h-5" />
+                    الرئيسية
+                </button>
+                <button onClick={() => setActiveTab("orders")} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${activeTab === "orders" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/20" : "text-slate-400 hover:text-white hover:bg-slate-800"}`}>
+                    <Package className="w-5 h-5" />
+                    الطلبات
+                    <span className="mr-auto bg-slate-800 text-slate-300 text-[10px] px-2 py-0.5 rounded-full">4</span>
+                </button>
+                <button onClick={() => setActiveTab("products")} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${activeTab === "products" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/20" : "text-slate-400 hover:text-white hover:bg-slate-800"}`}>
+                    <ShoppingBag className="w-5 h-5" />
+                    المنتجات
+                </button>
+                <button onClick={() => setActiveTab("settings")} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${activeTab === "settings" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/20" : "text-slate-400 hover:text-white hover:bg-slate-800"}`}>
+                    <Settings className="w-5 h-5" />
+                    الإعدادات
+                </button>
+            </nav>
+
+            <div className="p-4 border-t border-slate-800">
+                <button onClick={onBack} className="w-full flex items-center gap-2 text-slate-500 hover:text-white transition-colors px-4 py-3 hover:bg-slate-800 rounded-xl">
+                    <LogOut className="w-4 h-4" />
+                    العودة للمصمم
+                </button>
+            </div>
+        </div>
+
+        {/* Main Content */}
+        <div className="flex-1 flex flex-col h-screen overflow-hidden bg-[#0B0F19]">
+            <header className="h-20 border-b border-slate-800 bg-slate-900/80 backdrop-blur-md flex items-center justify-between px-8 z-10">
+                <div className="flex items-center gap-2 text-slate-400 text-sm">
+                    <span className="text-white font-bold text-lg">{config.storeName}</span>
+                    <span className="text-slate-600">/</span>
+                    <span>{activeTab === "overview" ? "الرئيسية" : activeTab === "orders" ? "الطلبات" : activeTab === "products" ? "المنتجات" : "الإعدادات"}</span>
+                </div>
+                <div className="flex items-center gap-6">
+                     <div className="relative">
+                        <Search className="w-5 h-5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
+                        <input type="text" placeholder="بحث..." className="bg-slate-950 border border-slate-800 rounded-full pl-4 pr-10 py-2 text-sm focus:outline-none focus:border-indigo-500 w-64 transition-all" />
+                     </div>
+                     <span className="flex items-center gap-2 text-xs bg-yellow-500/10 text-yellow-500 px-3 py-1.5 rounded-full border border-yellow-500/20 font-bold animate-pulse">
+                        <AlertCircle className="w-3 h-3" />
+                        بانتظار التفعيل
+                     </span>
+                     <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-slate-700 to-slate-600 border border-slate-500 flex items-center justify-center font-bold">A</div>
+                </div>
+            </header>
+
+            <div className="flex-1 overflow-y-auto custom-scrollbar">
+                {renderContent()}
+            </div>
+        </div>
+    </div>
+  );
+};
+
+// --- Publish Modal Component ---
+
+const PublishModal = ({ config, onClose, onSuccess }: { config: StoreConfig; onClose: () => void; onSuccess: () => void }) => {
+  const [step, setStep] = useState(1);
+  const [desiredSubdomain, setDesiredSubdomain] = useState(config.subdomain || "");
+  const [clientPhone, setClientPhone] = useState("");
+  const [uploadStatus, setUploadStatus] = useState<"idle" | "uploading" | "success" | "error">("idle");
+  const [serverConfig, setServerConfig] = useState({
+      ip: "",
+      dbUrl: "",
+      apiKey: ""
+  });
+
+  // Ensure admin password exists
+  const [adminPassword] = useState(config.adminPassword || Math.random().toString(36).slice(-8));
+
+  const handleNextStep = () => {
+      setStep(prev => prev + 1);
+  }
+
+  // --- AWS Upload Logic ---
+  const uploadStoreToAWS = async () => {
+      // التحقق من وجود مفاتيح الاتصال
+      if (!AWS_CONFIG.ACCESS_KEY_ID || !AWS_CONFIG.SECRET_ACCESS_KEY) {
+          console.error("AWS Credentials Missing! Please set them in index.tsx");
+          return false;
+      }
+
+      // إعداد العميل (Client)
+      const s3Client = new S3Client({
+          region: AWS_CONFIG.REGION,
+          credentials: {
+              accessKeyId: AWS_CONFIG.ACCESS_KEY_ID,
+              secretAccessKey: AWS_CONFIG.SECRET_ACCESS_KEY
+          }
+      });
+
+      // تحضير الملف
+      const finalConfig = { ...config, adminPassword, subdomain: desiredSubdomain };
+      const htmlContent = generateStaticStoreHTML(finalConfig);
+      const fileName = `${desiredSubdomain || 'store'}.html`;
+
+      // أمر الرفع
+      const params = {
+          Bucket: AWS_CONFIG.BUCKET_NAME,
+          Key: fileName,
+          Body: htmlContent,
+          ContentType: "text/html",
+          CacheControl: "max-age=0"
+      };
+
+      try {
+          // Try with ACL public-read first
+          try {
+            await s3Client.send(new PutObjectCommand({
+                ...params,
+                ACL: "public-read" 
+            }));
+          } catch (aclError) {
+             console.warn("ACL upload failed, trying without ACL (Bucket Policy might be sufficient)", aclError);
+             // Retry without ACL
+             await s3Client.send(new PutObjectCommand(params));
+          }
+          
+          console.log("Successfully uploaded to AWS S3");
+          return true;
+      } catch (e) {
+          console.error("AWS S3 Upload Error:", e);
+          return false;
+      }
+  };
+
+  const handlePublish = async () => {
+    setStep(3);
+    setUploadStatus("uploading");
+
+    // محاولة الرفع الفعلي لـ AWS
+    const uploaded = await uploadStoreToAWS();
+    
+    // تحميل نسخة احتياطية دائماً
+    downloadStoreHTML();
+
+    setTimeout(() => {
+      setUploadStatus(uploaded ? "success" : "error"); 
+      
+      // في حالة النجاح، الرابط هو رابط البكت المباشر أو CloudFront إذا تم إعداده
+      // سأفترض هنا رابط S3 المباشر للتجربة
+      const publicLink = `https://${AWS_CONFIG.BUCKET_NAME}.s3.${AWS_CONFIG.REGION}.amazonaws.com/${desiredSubdomain}.html`;
+      const adminLink = `${publicLink}#/admin`;
+      
+      // Send WhatsApp Notification to Owner
+      const message = `🚀 *New Order Alert (AWS S3 Upload)*\n\nStore: ${config.storeName}\nSubdomain: ${desiredSubdomain}\nClient Phone: ${clientPhone}\n\n🔐 *Admin Access:*\nURL: ${adminLink}\nPass: ${adminPassword}\n\nStatus: ${uploaded ? 'Uploaded to AWS S3 ✅' : 'Upload Failed (Keys missing?) ❌'}`;
+      const waLink = `https://wa.me/${OWNER_PHONE}?text=${encodeURIComponent(message)}`;
+      window.open(waLink, '_blank');
+      
+      // onSuccess(); // Removed to allow user to see the success screen
+    }, 4000); 
+  };
+
+  const fillMockData = () => {
+      // تعبئة بيانات وهمية للعرض فقط في واجهة المستخدم، الاتصال الحقيقي يعتمد على الثوابت في الأعلى
+      setServerConfig({
+          ip: "54.234.112.55", // Mock AWS IP
+          dbUrl: "postgres://admin:aws-rds-secure-db",
+          apiKey: "aws_access_key_id_..."
+      });
+  };
+
+  const downloadStoreHTML = () => {
+    const finalConfig = { ...config, adminPassword, subdomain: desiredSubdomain };
+    const htmlContent = generateStaticStoreHTML(finalConfig);
+    const blob = new Blob([htmlContent], { type: "text/html" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${desiredSubdomain || 'store'}.html`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const getStoreUrl = () => `https://${AWS_CONFIG.BUCKET_NAME}.s3.${AWS_CONFIG.REGION}.amazonaws.com/${desiredSubdomain}.html`;
+
+  return (
+    <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center p-4" dir="rtl">
+      <div className="bg-slate-900 rounded-3xl w-full max-w-lg overflow-hidden border border-slate-800 shadow-2xl relative">
+        <button onClick={onClose} className="absolute top-6 left-6 text-slate-500 hover:text-white transition-colors">
+            <X className="w-6 h-6" />
+        </button>
+        
+        {step === 1 && (
+          <div className="p-10 animate-fade-in">
+            <div className="flex justify-center mb-8">
+              <div className="bg-indigo-500/10 p-5 rounded-full ring-1 ring-indigo-500/50 relative">
+                <div className="absolute inset-0 rounded-full animate-ping bg-indigo-500/20"></div>
+                <Globe className="w-12 h-12 text-indigo-400 relative z-10" />
+              </div>
+            </div>
+            <h2 className="text-3xl font-bold text-center text-white mb-3">إطلاق متجرك للعالم 🚀</h2>
+            <p className="text-center text-slate-400 mb-8 leading-relaxed">
+              اختر اسم الدومين الفرعي الخاص بك على شبكة <span className="font-mono text-indigo-400">ehab.shop</span>
+            </p>
+            
+            <div className="space-y-4 mb-8">
+                <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">رابط المتجر المقترح</label>
+                    <div className="flex bg-slate-950 rounded-xl border border-slate-800 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500 transition-all overflow-hidden group hover:border-slate-700">
+                        <span className="px-4 py-4 text-slate-500 bg-slate-900 border-l border-slate-800 font-mono text-sm flex items-center select-none" dir="ltr">.ehab.shop</span>
+                        <input 
+                        type="text" 
+                        value={desiredSubdomain}
+                        onChange={(e) => setDesiredSubdomain(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+                        placeholder="my-awesome-store"
+                        className="flex-1 bg-transparent text-white px-4 py-4 focus:outline-none text-left font-mono font-bold tracking-tight"
+                        dir="ltr"
+                        />
+                    </div>
+                </div>
+                
+                <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">رقم الواتساب (لإشعارك عند الانتهاء)</label>
+                    <div className="flex bg-slate-950 rounded-xl border border-slate-800 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500 transition-all overflow-hidden group hover:border-slate-700">
+                        <Phone className="w-5 h-5 text-slate-500 m-4 ml-0" />
+                        <input 
+                        type="tel" 
+                        value={clientPhone}
+                        onChange={(e) => setClientPhone(e.target.value)}
+                        placeholder="05xxxxxxxx"
+                        className="flex-1 bg-transparent text-white px-4 py-4 focus:outline-none text-right font-mono font-bold tracking-tight"
+                        />
+                    </div>
+                </div>
+            </div>
+
+            <button 
+                onClick={handleNextStep}
+                disabled={!desiredSubdomain || !clientPhone}
+                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-4 rounded-xl font-bold shadow-lg shadow-indigo-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all transform hover:scale-[1.02] active:scale-[0.98]"
+            >
+                التالي: إعداد السيرفر السحابي
+            </button>
+          </div>
+        )}
+
+        {step === 2 && (
+            <div className="p-10 animate-fade-in">
+                <div className="flex items-center gap-3 mb-6">
+                    <div className="p-3 bg-slate-800 rounded-xl"><Cloud className="w-6 h-6 text-indigo-400" /></div>
+                    <div>
+                        <h2 className="text-xl font-bold text-white">بيانات AWS Cloud</h2>
+                        <p className="text-xs text-slate-400">تكوين S3 Buckets و CloudFront CDN</p>
+                    </div>
+                </div>
+
+                <div className="space-y-4 mb-8">
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-2">AWS Elastic IP (Host)</label>
+                        <div className="relative">
+                            <input 
+                                type="text" 
+                                value={serverConfig.ip}
+                                onChange={(e) => setServerConfig({...serverConfig, ip: e.target.value})}
+                                placeholder="e.g. 54.123.45.67" 
+                                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white font-mono text-sm focus:border-indigo-500 focus:outline-none"
+                                dir="ltr"
+                            />
+                            <Network className="w-4 h-4 text-slate-600 absolute right-3 top-3.5" />
+                        </div>
+                    </div>
+                    
+                    {/* Admin Password Display */}
+                    <div className="bg-slate-950 border border-indigo-500/30 rounded-xl p-4">
+                        <label className="block text-xs font-bold text-indigo-400 mb-2 flex items-center gap-2">
+                             <Key className="w-3 h-3" />
+                             كلمة مرور لوحة تحكم العميل (Admin)
+                        </label>
+                        <div className="flex items-center justify-between">
+                            <span className="text-white font-mono font-bold text-lg tracking-wider select-all">{adminPassword}</span>
+                            <span className="text-xs text-slate-500">تم التوليد تلقائياً</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 mb-6 text-xs text-yellow-500 flex gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <p>سيتم دمج لوحة التحكم (Admin Panel) داخل ملف المتجر تلقائياً لسهولة الإدارة.</p>
+                </div>
+
+                <div className="flex gap-3">
+                     <button 
+                        onClick={fillMockData}
+                        className="flex-1 bg-slate-800 hover:bg-slate-700 text-white py-3 rounded-xl font-bold text-sm transition-colors"
+                    >
+                        تهيئة تلقائية
+                    </button>
+                    <button 
+                        onClick={handlePublish}
+                        disabled={!serverConfig.ip}
+                        className="flex-[2] bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-xl font-bold shadow-lg shadow-emerald-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    >
+                        رفع ونشر (Deploy)
+                    </button>
+                </div>
+            </div>
+        )}
+
+        {step === 3 && (
+            <div className="p-16 text-center animate-fade-in">
+                <div className="relative w-24 h-24 mx-auto mb-8">
+                    <div className="absolute inset-0 border-4 border-slate-800 rounded-full"></div>
+                    <div className="absolute inset-0 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                    {uploadStatus === 'uploading' && <Cloud className="absolute inset-0 m-auto w-10 h-10 text-indigo-400 animate-pulse" />}
+                    {uploadStatus === 'success' && <CheckCircle className="absolute inset-0 m-auto w-10 h-10 text-emerald-400" />}
+                    {uploadStatus === 'error' && <AlertCircle className="absolute inset-0 m-auto w-10 h-10 text-red-400" />}
+                </div>
+                <h3 className="text-xl font-bold text-white mb-6">
+                    {uploadStatus === 'uploading' ? 'جاري الرفع إلى AWS S3...' : (uploadStatus === 'success' ? 'تم النشر بنجاح! 🎉' : 'فشل الاتصال بـ AWS')}
+                </h3>
+                
+                {uploadStatus === 'uploading' ? (
+                    <div className="flex flex-col gap-3 text-sm text-slate-400 text-right max-w-xs mx-auto">
+                        <div className="flex items-center gap-3 animate-fade-in [animation-delay:0.5s]">
+                            <div className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center"><CheckCircle className="w-3 h-3 text-emerald-500" /></div>
+                            <span>بناء التطبيق (Static Generation)</span>
+                        </div>
+                        <div className="flex items-center gap-3 animate-fade-in [animation-delay:1.5s]">
+                            <div className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center"><Lock className="w-3 h-3 text-emerald-500" /></div>
+                            <span>إعداد بوابة الدخول الآمنة</span>
+                        </div>
+                        <div className="flex items-center gap-3 animate-fade-in [animation-delay:2.5s]">
+                            <div className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center"><Cloud className="w-3 h-3 text-emerald-500" /></div>
+                            <span>مزامنة مع CloudFront CDN</span>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-6 text-emerald-100 text-sm leading-relaxed animate-fade-in text-right">
+                        <p className="mb-4">
+                           {uploadStatus === 'success' ? 'شكراً لك! لقد تم رفع ملفات المتجر بنجاح.' : 'لم نتمكن من الرفع لعدم وجود مفاتيح AWS، ولكن تم حفظ الملف محلياً.'}
+                        </p>
+                        <div className="bg-slate-950 p-4 rounded-lg border border-emerald-500/30 mb-4">
+                            <p className="text-xs text-slate-400 mb-1">رابط لوحة التحكم:</p>
+                            <p className="text-emerald-400 font-mono text-xs dir-ltr">https://{desiredSubdomain}.ehab.shop/#/admin</p>
+                            <div className="mt-2 pt-2 border-t border-slate-800">
+                                <p className="text-xs text-slate-400 mb-1">كلمة المرور:</p>
+                                <p className="text-white font-mono font-bold text-lg tracking-wider">{adminPassword}</p>
+                            </div>
+                        </div>
+                        <p className="mt-4 text-xs text-slate-400 text-center">
+                           تم تحميل نسخة احتياطية (HTML) على جهازك.
+                        </p>
+                        
+                        {uploadStatus === 'success' && (
+                            <div className="mt-6 flex flex-col gap-3">
+                                <a 
+                                    href={getStoreUrl()}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="bg-white text-emerald-600 px-6 py-3 rounded-full font-bold shadow-lg hover:scale-105 transition-transform flex items-center justify-center gap-2"
+                                >
+                                    <ExternalLink className="w-4 h-4" />
+                                    زيارة المتجر الحي
+                                </a>
+                                <button 
+                                    onClick={() => navigator.clipboard.writeText(getStoreUrl())}
+                                    className="bg-slate-800 text-slate-300 px-6 py-3 rounded-full font-bold hover:bg-slate-700 transition-colors flex items-center justify-center gap-2"
+                                >
+                                    <Copy className="w-4 h-4" />
+                                    نسخ الرابط
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// --- Authentication Component ---
+
+const AuthScreen = () => {
+    const [authMode, setAuthMode] = useState<'register' | 'login'>('register');
+    const [isLoading, setIsLoading] = useState(false);
+    const [errorMsg, setErrorMsg] = useState("");
+    
+    const [formData, setFormData] = useState({
+        name: '',
+        email: '',
+        phone: '',
+        password: ''
+    });
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setIsLoading(true);
+        setErrorMsg("");
+
+        try {
+            if (authMode === 'register') {
+                if (!formData.name) throw new Error("الاسم مطلوب");
+                
+                const { data, error } = await supabase.auth.signUp({
+                    email: formData.email,
+                    password: formData.password,
+                    options: {
+                        data: {
+                            full_name: formData.name,
+                            phone: formData.phone
+                        }
+                    }
+                });
+                
+                if (error) throw error;
+                // If email confirmation is required, Supabase might not return a session immediately.
+                if (!data.session && !error) {
+                    alert("تم إرسال رابط تأكيد إلى بريدك الإلكتروني. يرجى التحقق منه.");
+                }
+
+            } else {
+                const { data, error } = await supabase.auth.signInWithPassword({
+                    email: formData.email,
+                    password: formData.password
+                });
+                if (error) throw error;
+            }
+        } catch (error: any) {
+            console.error("Auth Error:", error);
+            setErrorMsg(error.message || "حدث خطأ أثناء الاتصال بالخادم");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    return (
+        <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 relative overflow-hidden" dir="rtl">
+            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-20"></div>
+            
+            <div className="w-full max-w-5xl bg-slate-900 rounded-3xl shadow-2xl overflow-hidden flex flex-col md:flex-row relative z-10 border border-slate-800">
+                
+                {/* Visual Side */}
+                <div className="w-full md:w-1/2 relative bg-indigo-900 p-12 flex flex-col justify-between overflow-hidden">
+                    <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1556742049-0cfed4f7a07d?auto=format&fit=crop&q=80')] bg-cover bg-center opacity-20 mix-blend-overlay"></div>
+                    <div className="absolute inset-0 bg-gradient-to-b from-transparent to-slate-900/90"></div>
+                    
+                    <div className="relative z-10">
+                        <div className="inline-flex items-center gap-2 bg-indigo-500/20 border border-indigo-500/30 rounded-full px-4 py-2 text-indigo-300 text-xs font-bold mb-6">
+                            <Sparkles className="w-4 h-4" />
+                            الذكاء الاصطناعي بين يديك
+                        </div>
+                        <h1 className="text-4xl md:text-5xl font-black text-white leading-tight mb-6">
+                            ابنِ متجرك الإلكتروني في <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-cyan-400">ثوانٍ معدودة</span>
+                        </h1>
+                        <p className="text-slate-300 text-lg leading-relaxed max-w-sm">
+                            انضم لأكثر من 10,000 تاجر يستخدمون إيهاب شوب لبناء مستقبل تجارتهم.
+                        </p>
+                    </div>
+
+                    <div className="relative z-10 mt-12 grid grid-cols-2 gap-4">
+                        <div className="bg-white/5 backdrop-blur-sm p-4 rounded-xl border border-white/10">
+                            <div className="text-2xl font-bold text-white mb-1">مجاني</div>
+                            <div className="text-xs text-slate-400">ابدأ بدون تكاليف</div>
+                        </div>
+                        <div className="bg-white/5 backdrop-blur-sm p-4 rounded-xl border border-white/10">
+                            <div className="text-2xl font-bold text-white mb-1">سريع</div>
+                            <div className="text-xs text-slate-400">جاهز في دقيقة</div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Form Side */}
+                <div className="w-full md:w-1/2 p-12 bg-slate-900">
+                    <div className="flex justify-end mb-8">
+                        <div className="flex bg-slate-800 rounded-lg p-1">
+                            <button 
+                                onClick={() => { setAuthMode('register'); setErrorMsg(""); }}
+                                className={`px-6 py-2 rounded-md text-sm font-bold transition-all ${authMode === 'register' ? 'bg-white text-slate-900 shadow-lg' : 'text-slate-400 hover:text-white'}`}
+                            >
+                                إنشاء حساب
+                            </button>
+                            <button 
+                                onClick={() => { setAuthMode('login'); setErrorMsg(""); }}
+                                className={`px-6 py-2 rounded-md text-sm font-bold transition-all ${authMode === 'login' ? 'bg-white text-slate-900 shadow-lg' : 'text-slate-400 hover:text-white'}`}
+                            >
+                                دخول
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="mb-8">
+                        <h2 className="text-2xl font-bold text-white mb-2">
+                            {authMode === 'register' ? 'ابدأ رحلتك الآن' : 'مرحباً بعودتك'}
+                        </h2>
+                        <p className="text-slate-400 text-sm">
+                            {authMode === 'register' ? 'قم بتعبئة البيانات لإنشاء متجرك فوراً' : 'سجل دخولك لمتابعة إدارة متاجرك'}
+                        </p>
+                    </div>
+
+                    {errorMsg && (
+                        <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-sm p-3 rounded-lg mb-4 flex items-center gap-2">
+                            <AlertCircle className="w-4 h-4" />
+                            {errorMsg}
+                        </div>
+                    )}
+
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                        {authMode === 'register' && (
+                            <div className="group">
+                                <label className="block text-xs font-bold text-slate-500 mb-2">الاسم الكامل</label>
+                                <div className="relative">
+                                    <input 
+                                        type="text" 
+                                        required 
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 pl-10 text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                                        placeholder="محمد أحمد"
+                                        value={formData.name}
+                                        onChange={(e) => setFormData({...formData, name: e.target.value})}
+                                    />
+                                    <User className="w-5 h-5 text-slate-600 absolute left-3 top-3" />
+                                </div>
+                            </div>
+                        )}
+
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 mb-2">البريد الإلكتروني</label>
+                            <div className="relative">
+                                <input 
+                                    type="email" 
+                                    required 
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 pl-10 text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                                    placeholder="name@example.com"
+                                    value={formData.email}
+                                    onChange={(e) => setFormData({...formData, email: e.target.value})}
+                                />
+                                <Mail className="w-5 h-5 text-slate-600 absolute left-3 top-3" />
+                            </div>
+                        </div>
+
+                        {authMode === 'register' && (
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 mb-2">رقم الهاتف (اختياري)</label>
+                                <div className="relative">
+                                    <input 
+                                        type="tel" 
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 pl-10 text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                                        placeholder="05xxxxxxxx"
+                                        value={formData.phone}
+                                        onChange={(e) => setFormData({...formData, phone: e.target.value})}
+                                    />
+                                    <Smartphone className="w-5 h-5 text-slate-600 absolute left-3 top-3" />
+                                </div>
+                            </div>
+                        )}
+
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 mb-2">كلمة المرور</label>
+                            <div className="relative">
+                                <input 
+                                    type="password" 
+                                    required 
+                                    minLength={6}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 pl-10 text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                                    placeholder="••••••••"
+                                    value={formData.password}
+                                    onChange={(e) => setFormData({...formData, password: e.target.value})}
+                                />
+                                <Lock className="w-5 h-5 text-slate-600 absolute left-3 top-3" />
+                            </div>
+                        </div>
+
+                        <button type="submit" disabled={isLoading} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 rounded-xl shadow-lg shadow-indigo-900/20 transition-all flex items-center justify-center gap-2 mt-6 group disabled:opacity-50 disabled:cursor-not-allowed">
+                            {isLoading ? (
+                                <Loader2 className="w-5 h-5 animate-spin" />
+                            ) : (
+                                <>
+                                    {authMode === 'register' ? 'إنشاء الحساب مجاناً' : 'تسجيل الدخول'}
+                                    <ArrowRight className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
+                                </>
+                            )}
+                        </button>
+                    </form>
+
+                    <div className="mt-8 pt-8 border-t border-slate-800">
+                        <div className="flex gap-4">
+                            <button className="flex-1 bg-white text-slate-900 font-bold py-3 rounded-xl flex items-center justify-center gap-2 hover:bg-slate-100 transition-colors text-sm">
+                                <svg className="w-5 h-5" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+                                Google
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// --- Main App Component ---
 
 const App = () => {
+  const [session, setSession] = useState<any>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+
   const [appMode, setAppMode] = useState<"builder" | "dashboard">("builder");
   const [storeConfig, setStoreConfig] = useState<StoreConfig>(initialStoreConfig);
   const [messages, setMessages] = useState<Message[]>([
@@ -708,8 +1588,48 @@ const App = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+      // 1. Get initial session
+      supabase.auth.getSession().then(({ data: { session } }) => {
+          setSession(session);
+          if (session?.user) {
+              updateUserProfile(session.user);
+              setIsAuthenticated(true);
+          }
+      });
+
+      // 2. Listen for changes
+      const {
+          data: { subscription },
+      } = supabase.auth.onAuthStateChange((_event, session) => {
+          setSession(session);
+          if (session?.user) {
+              updateUserProfile(session.user);
+              setIsAuthenticated(true);
+          } else {
+              setIsAuthenticated(false);
+              setCurrentUser(null);
+          }
+      });
+
+      return () => subscription.unsubscribe();
+  }, []);
+
+  const updateUserProfile = (user: any) => {
+      setCurrentUser({
+          id: user.id,
+          email: user.email,
+          name: user.user_metadata?.full_name || 'مستخدم',
+          phone: user.user_metadata?.phone
+      });
+  };
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  const handleLogout = async () => {
+      await supabase.auth.signOut();
+  };
 
   const handleSendMessage = async () => {
     if (!input.trim()) return;
@@ -783,30 +1703,53 @@ const App = () => {
     setIsCartOpen(true);
   };
 
+  if (!isAuthenticated) {
+      return (
+        <div>
+            {!isSupabaseConfigured && (
+                <div className="bg-red-600 text-white text-xs font-bold text-center py-2 px-4 fixed top-0 left-0 right-0 z-[100] shadow-lg animate-pulse">
+                    ⚠️ تنبيه: لم يتم ربط Supabase بعد. يرجى إضافة الروابط (URL & Key) في الكود لتفعيل المصادقة الحقيقية.
+                </div>
+            )}
+            <AuthScreen />
+        </div>
+      );
+  }
+
   if (appMode === "dashboard") {
     return <Dashboard config={storeConfig} onBack={() => setAppMode("builder")} />;
   }
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-950 text-slate-100 font-sans selection:bg-indigo-500 selection:text-white">
+      
+      {!isSupabaseConfigured && (
+        <div className="bg-red-600 text-white text-xs font-bold text-center py-1 px-4 fixed top-0 left-0 right-0 z-[100]">
+            ⚠️ تنبيه: وضع المصادقة الوهمي (Supabase غير مربوط)
+        </div>
+      )}
+
       {/* Sidebar / Chat Interface */}
       <div className="w-full md:w-[420px] flex flex-col border-l border-slate-800 bg-slate-900/90 backdrop-blur-xl z-20 shadow-2xl relative">
         
         {/* Header */}
-        <div className="p-6 border-b border-slate-800 flex items-center justify-between bg-slate-900">
+        <div className="p-6 border-b border-slate-800 flex items-center justify-between bg-slate-900 mt-6">
           <div className="flex items-center gap-3">
             <div className="bg-gradient-to-br from-blue-600 to-indigo-600 p-2.5 rounded-xl shadow-lg shadow-blue-500/20">
               <Sparkles className="w-5 h-5 text-white" />
             </div>
             <div>
               <h1 className="font-bold text-white text-lg tracking-tight">Ehab.Shop</h1>
-              <p className="text-[11px] text-slate-400 font-medium">AI Agency Builder v2.0</p>
+              <p className="text-[11px] text-slate-400 font-medium">Welcome, {currentUser?.name}</p>
             </div>
           </div>
-          <div className="flex gap-2">
-             <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></div>
-             <span className="text-[10px] text-green-400 font-mono">ONLINE</span>
-          </div>
+          <button 
+            onClick={handleLogout}
+            className="flex items-center gap-2 text-xs text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 px-3 py-1.5 rounded-lg transition-colors"
+          >
+             <LogOut className="w-3 h-3" />
+             خروج
+          </button>
         </div>
 
         {/* Chat Area */}
@@ -881,7 +1824,7 @@ const App = () => {
       <div className="hidden md:flex flex-1 flex-col bg-slate-950 relative">
         
         {/* Toolbar */}
-        <div className="h-16 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-900/80 backdrop-blur">
+        <div className="h-16 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-900/80 backdrop-blur mt-6">
           <div className="flex items-center gap-6">
             <div className="flex bg-slate-800/50 rounded-lg p-1 border border-slate-700/50">
               <button 
@@ -1366,613 +2309,6 @@ const App = () => {
           }}
         />
       )}
-    </div>
-  );
-};
-
-// --- Publish Modal Component ---
-
-const PublishModal = ({ config, onClose, onSuccess }: { config: StoreConfig; onClose: () => void; onSuccess: () => void }) => {
-  const [step, setStep] = useState(1);
-  const [desiredSubdomain, setDesiredSubdomain] = useState(config.subdomain || "");
-  const [clientPhone, setClientPhone] = useState("");
-  const [uploadStatus, setUploadStatus] = useState<"idle" | "uploading" | "success" | "error">("idle");
-  const [serverConfig, setServerConfig] = useState({
-      ip: "",
-      dbUrl: "",
-      apiKey: ""
-  });
-
-  // Ensure admin password exists
-  const [adminPassword] = useState(config.adminPassword || Math.random().toString(36).slice(-8));
-
-  const handleNextStep = () => {
-      setStep(prev => prev + 1);
-  }
-
-  // --- AWS Upload Logic ---
-  const uploadStoreToAWS = async () => {
-      // التحقق من وجود مفاتيح الاتصال
-      if (!AWS_CONFIG.ACCESS_KEY_ID || !AWS_CONFIG.SECRET_ACCESS_KEY) {
-          console.error("AWS Credentials Missing! Please set them in index.tsx");
-          return false;
-      }
-
-      // إعداد العميل (Client)
-      const s3Client = new S3Client({
-          region: AWS_CONFIG.REGION,
-          credentials: {
-              accessKeyId: AWS_CONFIG.ACCESS_KEY_ID,
-              secretAccessKey: AWS_CONFIG.SECRET_ACCESS_KEY
-          }
-      });
-
-      // تحضير الملف
-      const finalConfig = { ...config, adminPassword, subdomain: desiredSubdomain };
-      const htmlContent = generateStaticStoreHTML(finalConfig);
-      const fileName = `${desiredSubdomain || 'store'}.html`;
-
-      // أمر الرفع
-      const params = {
-          Bucket: AWS_CONFIG.BUCKET_NAME,
-          Key: fileName,
-          Body: htmlContent,
-          ContentType: "text/html",
-          CacheControl: "max-age=0"
-      };
-
-      try {
-          // Try with ACL public-read first
-          try {
-            await s3Client.send(new PutObjectCommand({
-                ...params,
-                ACL: "public-read" 
-            }));
-          } catch (aclError) {
-             console.warn("ACL upload failed, trying without ACL (Bucket Policy might be sufficient)", aclError);
-             // Retry without ACL
-             await s3Client.send(new PutObjectCommand(params));
-          }
-          
-          console.log("Successfully uploaded to AWS S3");
-          return true;
-      } catch (e) {
-          console.error("AWS S3 Upload Error:", e);
-          return false;
-      }
-  };
-
-  const handlePublish = async () => {
-    setStep(3);
-    setUploadStatus("uploading");
-
-    // محاولة الرفع الفعلي لـ AWS
-    const uploaded = await uploadStoreToAWS();
-    
-    // تحميل نسخة احتياطية دائماً
-    downloadStoreHTML();
-
-    setTimeout(() => {
-      setUploadStatus(uploaded ? "success" : "error"); 
-      
-      // في حالة النجاح، الرابط هو رابط البكت المباشر أو CloudFront إذا تم إعداده
-      // سأفترض هنا رابط S3 المباشر للتجربة
-      const publicLink = `https://${AWS_CONFIG.BUCKET_NAME}.s3.${AWS_CONFIG.REGION}.amazonaws.com/${desiredSubdomain}.html`;
-      const adminLink = `${publicLink}#/admin`;
-      
-      // Send WhatsApp Notification to Owner
-      const message = `🚀 *New Order Alert (AWS S3 Upload)*\n\nStore: ${config.storeName}\nSubdomain: ${desiredSubdomain}\nClient Phone: ${clientPhone}\n\n🔐 *Admin Access:*\nURL: ${adminLink}\nPass: ${adminPassword}\n\nStatus: ${uploaded ? 'Uploaded to AWS S3 ✅' : 'Upload Failed (Keys missing?) ❌'}`;
-      const waLink = `https://wa.me/${OWNER_PHONE}?text=${encodeURIComponent(message)}`;
-      window.open(waLink, '_blank');
-      
-      // onSuccess(); // Removed to allow user to see the success screen
-    }, 4000); 
-  };
-
-  const fillMockData = () => {
-      // تعبئة بيانات وهمية للعرض فقط في واجهة المستخدم، الاتصال الحقيقي يعتمد على الثوابت في الأعلى
-      setServerConfig({
-          ip: "54.234.112.55", // Mock AWS IP
-          dbUrl: "postgres://admin:aws-rds-secure-db",
-          apiKey: "aws_access_key_id_..."
-      });
-  };
-
-  const downloadStoreHTML = () => {
-    const finalConfig = { ...config, adminPassword, subdomain: desiredSubdomain };
-    const htmlContent = generateStaticStoreHTML(finalConfig);
-    const blob = new Blob([htmlContent], { type: "text/html" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = `${desiredSubdomain || 'store'}.html`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  return (
-    <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center p-4" dir="rtl">
-      <div className="bg-slate-900 rounded-3xl w-full max-w-lg overflow-hidden border border-slate-800 shadow-2xl relative">
-        <button onClick={onClose} className="absolute top-6 left-6 text-slate-500 hover:text-white transition-colors">
-            <X className="w-6 h-6" />
-        </button>
-        
-        {step === 1 && (
-          <div className="p-10 animate-fade-in">
-            <div className="flex justify-center mb-8">
-              <div className="bg-indigo-500/10 p-5 rounded-full ring-1 ring-indigo-500/50 relative">
-                <div className="absolute inset-0 rounded-full animate-ping bg-indigo-500/20"></div>
-                <Globe className="w-12 h-12 text-indigo-400 relative z-10" />
-              </div>
-            </div>
-            <h2 className="text-3xl font-bold text-center text-white mb-3">إطلاق متجرك للعالم 🚀</h2>
-            <p className="text-center text-slate-400 mb-8 leading-relaxed">
-              اختر اسم الدومين الفرعي الخاص بك على شبكة <span className="font-mono text-indigo-400">ehab.shop</span>
-            </p>
-            
-            <div className="space-y-4 mb-8">
-                <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">رابط المتجر المقترح</label>
-                    <div className="flex bg-slate-950 rounded-xl border border-slate-800 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500 transition-all overflow-hidden group hover:border-slate-700">
-                        <span className="px-4 py-4 text-slate-500 bg-slate-900 border-l border-slate-800 font-mono text-sm flex items-center select-none" dir="ltr">.ehab.shop</span>
-                        <input 
-                        type="text" 
-                        value={desiredSubdomain}
-                        onChange={(e) => setDesiredSubdomain(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
-                        placeholder="my-awesome-store"
-                        className="flex-1 bg-transparent text-white px-4 py-4 focus:outline-none text-left font-mono font-bold tracking-tight"
-                        dir="ltr"
-                        />
-                    </div>
-                </div>
-                
-                <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">رقم الواتساب (لإشعارك عند الانتهاء)</label>
-                    <div className="flex bg-slate-950 rounded-xl border border-slate-800 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500 transition-all overflow-hidden group hover:border-slate-700">
-                        <Phone className="w-5 h-5 text-slate-500 m-4 ml-0" />
-                        <input 
-                        type="tel" 
-                        value={clientPhone}
-                        onChange={(e) => setClientPhone(e.target.value)}
-                        placeholder="05xxxxxxxx"
-                        className="flex-1 bg-transparent text-white px-4 py-4 focus:outline-none text-right font-mono font-bold tracking-tight"
-                        />
-                    </div>
-                </div>
-            </div>
-
-            <button 
-                onClick={handleNextStep}
-                disabled={!desiredSubdomain || !clientPhone}
-                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-4 rounded-xl font-bold shadow-lg shadow-indigo-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all transform hover:scale-[1.02] active:scale-[0.98]"
-            >
-                التالي: إعداد السيرفر السحابي
-            </button>
-          </div>
-        )}
-
-        {step === 2 && (
-            <div className="p-10 animate-fade-in">
-                <div className="flex items-center gap-3 mb-6">
-                    <div className="p-3 bg-slate-800 rounded-xl"><Cloud className="w-6 h-6 text-indigo-400" /></div>
-                    <div>
-                        <h2 className="text-xl font-bold text-white">بيانات AWS Cloud</h2>
-                        <p className="text-xs text-slate-400">تكوين S3 Buckets و CloudFront CDN</p>
-                    </div>
-                </div>
-
-                <div className="space-y-4 mb-8">
-                    <div>
-                        <label className="block text-xs font-bold text-slate-500 mb-2">AWS Elastic IP (Host)</label>
-                        <div className="relative">
-                            <input 
-                                type="text" 
-                                value={serverConfig.ip}
-                                onChange={(e) => setServerConfig({...serverConfig, ip: e.target.value})}
-                                placeholder="e.g. 54.123.45.67" 
-                                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white font-mono text-sm focus:border-indigo-500 focus:outline-none"
-                                dir="ltr"
-                            />
-                            <Network className="w-4 h-4 text-slate-600 absolute right-3 top-3.5" />
-                        </div>
-                    </div>
-                    
-                    {/* Admin Password Display */}
-                    <div className="bg-slate-950 border border-indigo-500/30 rounded-xl p-4">
-                        <label className="block text-xs font-bold text-indigo-400 mb-2 flex items-center gap-2">
-                             <Key className="w-3 h-3" />
-                             كلمة مرور لوحة تحكم العميل (Admin)
-                        </label>
-                        <div className="flex items-center justify-between">
-                            <span className="text-white font-mono font-bold text-lg tracking-wider select-all">{adminPassword}</span>
-                            <span className="text-xs text-slate-500">تم التوليد تلقائياً</span>
-                        </div>
-                    </div>
-                </div>
-                
-                <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 mb-6 text-xs text-yellow-500 flex gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0" />
-                    <p>سيتم دمج لوحة التحكم (Admin Panel) داخل ملف المتجر تلقائياً لسهولة الإدارة.</p>
-                </div>
-
-                <div className="flex gap-3">
-                     <button 
-                        onClick={fillMockData}
-                        className="flex-1 bg-slate-800 hover:bg-slate-700 text-white py-3 rounded-xl font-bold text-sm transition-colors"
-                    >
-                        تهيئة تلقائية
-                    </button>
-                    <button 
-                        onClick={handlePublish}
-                        disabled={!serverConfig.ip}
-                        className="flex-[2] bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-xl font-bold shadow-lg shadow-emerald-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                    >
-                        رفع ونشر (Deploy)
-                    </button>
-                </div>
-            </div>
-        )}
-
-        {step === 3 && (
-            <div className="p-16 text-center animate-fade-in">
-                <div className="relative w-24 h-24 mx-auto mb-8">
-                    <div className="absolute inset-0 border-4 border-slate-800 rounded-full"></div>
-                    <div className="absolute inset-0 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-                    {uploadStatus === 'uploading' && <Cloud className="absolute inset-0 m-auto w-10 h-10 text-indigo-400 animate-pulse" />}
-                    {uploadStatus === 'success' && <CheckCircle className="absolute inset-0 m-auto w-10 h-10 text-emerald-400" />}
-                    {uploadStatus === 'error' && <AlertCircle className="absolute inset-0 m-auto w-10 h-10 text-red-400" />}
-                </div>
-                <h3 className="text-xl font-bold text-white mb-6">
-                    {uploadStatus === 'uploading' ? 'جاري الرفع إلى AWS S3...' : (uploadStatus === 'success' ? 'تم النشر بنجاح! 🎉' : 'فشل الاتصال بـ AWS')}
-                </h3>
-                
-                {uploadStatus === 'uploading' ? (
-                    <div className="flex flex-col gap-3 text-sm text-slate-400 text-right max-w-xs mx-auto">
-                        <div className="flex items-center gap-3 animate-fade-in [animation-delay:0.5s]">
-                            <div className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center"><CheckCircle className="w-3 h-3 text-emerald-500" /></div>
-                            <span>بناء التطبيق (Static Generation)</span>
-                        </div>
-                        <div className="flex items-center gap-3 animate-fade-in [animation-delay:1.5s]">
-                            <div className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center"><Lock className="w-3 h-3 text-emerald-500" /></div>
-                            <span>إعداد بوابة الدخول الآمنة</span>
-                        </div>
-                        <div className="flex items-center gap-3 animate-fade-in [animation-delay:2.5s]">
-                            <div className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center"><Cloud className="w-3 h-3 text-emerald-500" /></div>
-                            <span>مزامنة مع CloudFront CDN</span>
-                        </div>
-                    </div>
-                ) : (
-                    <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-6 text-emerald-100 text-sm leading-relaxed animate-fade-in text-right">
-                        <p className="mb-4">
-                           {uploadStatus === 'success' ? 'شكراً لك! لقد تم رفع ملفات المتجر بنجاح.' : 'لم نتمكن من الرفع لعدم وجود مفاتيح AWS، ولكن تم حفظ الملف محلياً.'}
-                        </p>
-                        <div className="bg-slate-950 p-4 rounded-lg border border-emerald-500/30 mb-4">
-                            <p className="text-xs text-slate-400 mb-1">رابط لوحة التحكم:</p>
-                            <p className="text-emerald-400 font-mono text-xs dir-ltr">https://{desiredSubdomain}.ehab.shop/#/admin</p>
-                            <div className="mt-2 pt-2 border-t border-slate-800">
-                                <p className="text-xs text-slate-400 mb-1">كلمة المرور:</p>
-                                <p className="text-white font-mono font-bold text-lg tracking-wider">{adminPassword}</p>
-                            </div>
-                        </div>
-                        <p className="mt-4 text-xs text-slate-400 text-center">
-                           تم تحميل نسخة احتياطية (HTML) على جهازك.
-                        </p>
-                        
-                        {uploadStatus === 'success' && (
-                            <div className="mt-6 flex justify-center">
-                                <a 
-                                    href={`https://${AWS_CONFIG.BUCKET_NAME}.s3.${AWS_CONFIG.REGION}.amazonaws.com/${desiredSubdomain}.html`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="bg-white text-emerald-600 px-6 py-2 rounded-full font-bold shadow-lg hover:scale-105 transition-transform flex items-center gap-2"
-                                >
-                                    <ExternalLink className="w-4 h-4" />
-                                    زيارة المتجر الحي
-                                </a>
-                            </div>
-                        )}
-                    </div>
-                )}
-            </div>
-        )}
-      </div>
-    </div>
-  );
-};
-
-// --- Merchant Dashboard Component ---
-
-const Dashboard = ({ config, onBack }: { config: StoreConfig; onBack: () => void }) => {
-  const [activeTab, setActiveTab] = useState("overview");
-  const [connectionKey] = useState(`KEY_${Math.random().toString(36).substring(2, 9).toUpperCase()}`);
-  
-  const getWhatsAppLink = () => {
-    const message = `مرحباً إيهاب،\nلقد قمت بإنشاء متجر جديد.\nالاسم: ${config.storeName}\nالدومين: ${config.subdomain}.ehab.shop\nمفتاح: ${connectionKey}`;
-    return `https://wa.me/201011500753?text=${encodeURIComponent(message)}`;
-  };
-
-  const renderContent = () => {
-    switch (activeTab) {
-      case "orders":
-        return (
-           <div className="p-8 max-w-6xl mx-auto animate-fade-in">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-bold">الطلبات</h2>
-                <div className="flex gap-2">
-                    <button className="bg-slate-800 text-slate-300 px-4 py-2 rounded-lg text-sm hover:bg-slate-700 flex items-center gap-2"><Filter className="w-4 h-4" /> تصفية</button>
-                    <button className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-indigo-500">تصدير CSV</button>
-                </div>
-              </div>
-              <div className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden">
-                <table className="w-full text-right text-sm">
-                   <thead className="bg-slate-950 text-slate-500 border-b border-slate-800">
-                      <tr>
-                        <th className="p-4">رقم الطلب</th>
-                        <th className="p-4">العميل</th>
-                        <th className="p-4">التاريخ</th>
-                        <th className="p-4">الحالة</th>
-                        <th className="p-4">الإجمالي</th>
-                        <th className="p-4"></th>
-                      </tr>
-                   </thead>
-                   <tbody className="divide-y divide-slate-800 text-slate-300">
-                      {[1001, 1002, 1003, 1004].map((id) => (
-                        <tr key={id} className="hover:bg-slate-800/50 transition-colors">
-                           <td className="p-4 font-mono text-indigo-400">#{id}</td>
-                           <td className="p-4">عميل افتراضي</td>
-                           <td className="p-4 text-slate-500">منذ ساعتين</td>
-                           <td className="p-4"><span className="bg-yellow-500/10 text-yellow-500 px-2 py-1 rounded-md text-xs border border-yellow-500/20">قيد الانتظار</span></td>
-                           <td className="p-4 font-bold">0.00 {config.currency}</td>
-                           <td className="p-4 text-center text-slate-500 hover:text-white cursor-pointer"><MoreHorizontal className="w-4 h-4 mx-auto"/></td>
-                        </tr>
-                      ))}
-                   </tbody>
-                </table>
-              </div>
-           </div>
-        );
-      case "products":
-        return (
-           <div className="p-8 max-w-6xl mx-auto animate-fade-in">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-bold">المنتجات ({config.products.length})</h2>
-                <button className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-emerald-500 flex items-center gap-2">
-                    <Package className="w-4 h-4" /> إضافة منتج
-                </button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                 {config.products.map((p, i) => (
-                    <div key={i} className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden group hover:border-indigo-500/50 transition-colors">
-                       <div className="h-40 w-full flex items-center justify-center relative" style={{backgroundColor: p.color}}>
-                          <span className="text-4xl font-black text-black/20">{p.name.charAt(0)}</span>
-                          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                             <button className="p-2 bg-white rounded-full text-slate-900 hover:bg-slate-200"><Settings className="w-4 h-4" /></button>
-                          </div>
-                          {p.tag && <span className="absolute top-2 right-2 bg-black/50 text-white text-[10px] px-2 py-0.5 rounded backdrop-blur-sm">{p.tag}</span>}
-                       </div>
-                       <div className="p-4">
-                          <h3 className="font-bold text-white truncate text-sm mb-1">{p.name}</h3>
-                          <div className="flex justify-between items-center">
-                             <span className="text-slate-400 text-xs font-mono">{p.price} {config.currency}</span>
-                             <span className="flex h-2 w-2 relative">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                             </span>
-                          </div>
-                       </div>
-                    </div>
-                 ))}
-                 <button className="bg-slate-900/50 rounded-xl border border-dashed border-slate-700 flex flex-col items-center justify-center text-slate-500 hover:text-white hover:border-slate-500 hover:bg-slate-800 transition-all min-h-[200px]">
-                    <Package className="w-8 h-8 mb-2 opacity-50" />
-                    <span className="text-sm font-bold">منتج جديد</span>
-                 </button>
-              </div>
-           </div>
-        );
-      case "settings":
-         return (
-            <div className="p-8 max-w-4xl mx-auto animate-fade-in">
-               <h2 className="text-2xl font-bold mb-6">إعدادات المتجر</h2>
-               <div className="bg-slate-900 rounded-xl border border-slate-800 p-8 space-y-8">
-                  <div>
-                     <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Globe className="w-5 h-5 text-indigo-500"/> النطاق</h3>
-                     <div className="flex items-center gap-2 bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-slate-300">
-                        <span className="text-emerald-500"><CheckCircle className="w-4 h-4" /></span>
-                        {config.subdomain}.ehab.shop
-                        <span className="mr-auto text-xs text-slate-500 bg-slate-800 px-2 py-1 rounded">نشط</span>
-                     </div>
-                  </div>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div>
-                        <label className="block text-slate-400 text-sm mb-2 font-bold">اسم المتجر</label>
-                        <input type="text" value={config.storeName} readOnly className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-slate-300 focus:outline-none focus:border-indigo-500" />
-                      </div>
-                      <div>
-                        <label className="block text-slate-400 text-sm mb-2 font-bold">لون الهوية</label>
-                        <div className="flex items-center gap-3 bg-slate-950 border border-slate-700 rounded-lg p-2 pr-4">
-                            <div className="w-8 h-8 rounded shadow-sm" style={{backgroundColor: config.primaryColor}}></div>
-                            <span className="text-slate-500 font-mono text-sm">{config.primaryColor}</span>
-                        </div>
-                      </div>
-                  </div>
-
-                  <div>
-                     <label className="block text-slate-400 text-sm mb-2 font-bold">وصف المتجر (SEO)</label>
-                     <textarea readOnly value={config.aboutUs} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-slate-300 focus:outline-none h-24 resize-none text-sm leading-relaxed"></textarea>
-                  </div>
-                  
-                  <div className="pt-6 border-t border-slate-800 flex justify-between items-center">
-                     <span className="text-xs text-slate-500">آخر تحديث: قبل دقيقة</span>
-                     <button className="py-2 px-6 bg-red-500/10 text-red-500 border border-red-500/20 rounded-lg hover:bg-red-500/20 transition-colors text-sm font-bold">
-                        حذف المتجر
-                     </button>
-                  </div>
-               </div>
-            </div>
-         );
-      default:
-        // Overview
-        return (
-            <main className="p-8 max-w-6xl mx-auto animate-fade-in">
-                {/* Stats Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                    <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 relative overflow-hidden">
-                         <div className="absolute -right-6 -top-6 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl"></div>
-                        <div className="flex justify-between items-start mb-4 relative z-10">
-                            <div className="p-2 bg-emerald-500/10 rounded-lg"><TrendingUp className="w-5 h-5 text-emerald-500" /></div>
-                            <span className="text-xs text-emerald-500 font-bold bg-emerald-500/10 px-2 py-1 rounded-full">+12%</span>
-                        </div>
-                        <h3 className="text-slate-400 text-sm mb-1 font-medium">إجمالي المبيعات (تجريبي)</h3>
-                        <p className="text-3xl font-bold text-white tracking-tight">0.00 <span className="text-lg text-slate-500 font-normal">{config.currency}</span></p>
-                    </div>
-                    <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 relative overflow-hidden">
-                        <div className="absolute -right-6 -top-6 w-24 h-24 bg-blue-500/5 rounded-full blur-2xl"></div>
-                        <div className="flex justify-between items-start mb-4 relative z-10">
-                            <div className="p-2 bg-blue-500/10 rounded-lg"><Users className="w-5 h-5 text-blue-500" /></div>
-                            <span className="text-xs text-blue-500 font-bold bg-blue-500/10 px-2 py-1 rounded-full">+5%</span>
-                        </div>
-                        <h3 className="text-slate-400 text-sm mb-1 font-medium">الزيارات الحالية</h3>
-                        <p className="text-3xl font-bold text-white tracking-tight">1</p>
-                    </div>
-                    <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 relative overflow-hidden">
-                        <div className="absolute -right-6 -top-6 w-24 h-24 bg-purple-500/5 rounded-full blur-2xl"></div>
-                        <div className="flex justify-between items-start mb-4 relative z-10">
-                            <div className="p-2 bg-purple-500/10 rounded-lg"><Package className="w-5 h-5 text-purple-500" /></div>
-                        </div>
-                        <h3 className="text-slate-400 text-sm mb-1 font-medium">الطلبات الجديدة</h3>
-                        <p className="text-3xl font-bold text-white tracking-tight">0</p>
-                    </div>
-                </div>
-
-                {/* Activation Alert */}
-                <div className="bg-gradient-to-r from-indigo-900/40 to-slate-900 border border-indigo-500/20 rounded-2xl p-8 mb-8 relative overflow-hidden shadow-2xl">
-                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-500 animate-pulse"></div>
-                    <div className="flex flex-col md:flex-row items-center justify-between gap-6 relative z-10">
-                        <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-2">
-                                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                                <h3 className="text-xl font-bold text-white">متجرك جاهز للإطلاق! 🚀</h3>
-                            </div>
-                            <p className="text-slate-400 text-sm leading-relaxed max-w-xl">
-                                لقد تم حجز الدومين <span className="text-indigo-400 font-mono bg-indigo-500/10 px-2 py-0.5 rounded">{config.subdomain}.ehab.shop</span> بنجاح.
-                                للبدء في استقبال الطلبات الحقيقية وتفعيل بوابات الدفع، يجب ربط المتجر بحسابك التجاري.
-                            </p>
-                        </div>
-                        <a 
-                            href={getWhatsAppLink()}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="bg-[#25D366] hover:bg-[#20bd5a] text-white px-8 py-4 rounded-xl font-bold flex items-center gap-3 shadow-lg shadow-green-900/20 transition-all transform hover:-translate-y-1 whitespace-nowrap group"
-                        >
-                            <Phone className="w-5 h-5 fill-current group-hover:animate-bounce" />
-                            تفعيل المتجر الآن
-                        </a>
-                    </div>
-                </div>
-
-                {/* Recent Products Preview */}
-                <div className="bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden">
-                    <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
-                        <h3 className="font-bold text-lg flex items-center gap-2"><Sparkles className="w-4 h-4 text-yellow-500"/> المنتجات المضافة حديثاً</h3>
-                        <button onClick={() => setActiveTab("products")} className="text-sm text-indigo-400 hover:text-indigo-300 font-medium hover:underline">عرض الكل</button>
-                    </div>
-                    <table className="w-full text-right text-sm">
-                        <thead className="bg-slate-950 text-slate-500">
-                            <tr>
-                                <th className="p-4 font-medium">المنتج</th>
-                                <th className="p-4 font-medium">السعر</th>
-                                <th className="p-4 font-medium">الحالة</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-800">
-                            {config.products.length > 0 ? config.products.slice(0, 3).map((p, i) => (
-                                <tr key={i} className="hover:bg-slate-800/50 transition-colors">
-                                    <td className="p-4 flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center text-xs font-bold text-black/50" style={{backgroundColor: p.color}}>{p.name.charAt(0)}</div>
-                                        <span className="font-bold text-slate-200">{p.name}</span>
-                                    </td>
-                                    <td className="p-4 text-slate-400 font-mono">{p.price} {config.currency}</td>
-                                    <td className="p-4"><span className="bg-emerald-500/10 text-emerald-500 px-2 py-1 rounded text-xs font-bold border border-emerald-500/20">نشط</span></td>
-                                </tr>
-                            )) : (
-                                <tr>
-                                    <td colSpan={3} className="p-8 text-center text-slate-500">لا توجد منتجات بعد</td>
-                                </tr>
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </main>
-        );
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans flex overflow-hidden" dir="rtl">
-        {/* Sidebar */}
-        <div className="w-72 bg-slate-900 border-l border-slate-800 flex flex-col shadow-2xl z-20">
-            <div className="p-6 border-b border-slate-800 flex items-center gap-3">
-                <div className="w-10 h-10 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-xl flex items-center justify-center font-bold text-xl shadow-lg shadow-indigo-500/20">E</div>
-                <div>
-                    <span className="font-bold text-lg block">لوحة التاجر</span>
-                    <span className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Pro Account</span>
-                </div>
-            </div>
-            
-            <nav className="p-4 space-y-2 flex-1">
-                <button onClick={() => setActiveTab("overview")} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${activeTab === "overview" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/20" : "text-slate-400 hover:text-white hover:bg-slate-800"}`}>
-                    <LayoutDashboard className="w-5 h-5" />
-                    الرئيسية
-                </button>
-                <button onClick={() => setActiveTab("orders")} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${activeTab === "orders" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/20" : "text-slate-400 hover:text-white hover:bg-slate-800"}`}>
-                    <Package className="w-5 h-5" />
-                    الطلبات
-                    <span className="mr-auto bg-slate-800 text-slate-300 text-[10px] px-2 py-0.5 rounded-full">4</span>
-                </button>
-                <button onClick={() => setActiveTab("products")} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${activeTab === "products" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/20" : "text-slate-400 hover:text-white hover:bg-slate-800"}`}>
-                    <ShoppingBag className="w-5 h-5" />
-                    المنتجات
-                </button>
-                <button onClick={() => setActiveTab("settings")} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${activeTab === "settings" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/20" : "text-slate-400 hover:text-white hover:bg-slate-800"}`}>
-                    <Settings className="w-5 h-5" />
-                    الإعدادات
-                </button>
-            </nav>
-
-            <div className="p-4 border-t border-slate-800">
-                <button onClick={onBack} className="w-full flex items-center gap-2 text-slate-500 hover:text-white transition-colors px-4 py-3 hover:bg-slate-800 rounded-xl">
-                    <LogOut className="w-4 h-4" />
-                    العودة للمصمم
-                </button>
-            </div>
-        </div>
-
-        {/* Main Content */}
-        <div className="flex-1 flex flex-col h-screen overflow-hidden bg-[#0B0F19]">
-            <header className="h-20 border-b border-slate-800 bg-slate-900/80 backdrop-blur-md flex items-center justify-between px-8 z-10">
-                <div className="flex items-center gap-2 text-slate-400 text-sm">
-                    <span className="text-white font-bold text-lg">{config.storeName}</span>
-                    <span className="text-slate-600">/</span>
-                    <span>{activeTab === "overview" ? "الرئيسية" : activeTab === "orders" ? "الطلبات" : activeTab === "products" ? "المنتجات" : "الإعدادات"}</span>
-                </div>
-                <div className="flex items-center gap-6">
-                     <div className="relative">
-                        <Search className="w-5 h-5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
-                        <input type="text" placeholder="بحث..." className="bg-slate-950 border border-slate-800 rounded-full pl-4 pr-10 py-2 text-sm focus:outline-none focus:border-indigo-500 w-64 transition-all" />
-                     </div>
-                     <span className="flex items-center gap-2 text-xs bg-yellow-500/10 text-yellow-500 px-3 py-1.5 rounded-full border border-yellow-500/20 font-bold animate-pulse">
-                        <AlertCircle className="w-3 h-3" />
-                        بانتظار التفعيل
-                     </span>
-                     <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-slate-700 to-slate-600 border border-slate-500 flex items-center justify-center font-bold">A</div>
-                </div>
-            </header>
-
-            <div className="flex-1 overflow-y-auto custom-scrollbar">
-                {renderContent()}
-            </div>
-        </div>
     </div>
   );
 };
