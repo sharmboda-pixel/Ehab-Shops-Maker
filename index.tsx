@@ -19,8 +19,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 // --- CONFIGURATION (AWS & SUPABASE) ---
 
 // 🔴 هام جداً: قم بوضع بيانات SUPABASE الخاصة بك هنا
-const SUPABASE_URL = "YOUR_SUPABASE_PROJECT_URL"; // مثال: https://xyz.supabase.co
-const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY"; // المفتاح الطويل الذي يبدأ بـ eyJ...
+const SUPABASE_URL = "https://sxapuhegosranqrljzer.supabase.co"; 
+const SUPABASE_ANON_KEY = "sb_publishable_RQYpslO3swlcq3-OJTK4ZA_FOP65wZA"; 
 
 const AWS_CONFIG = {
     REGION: "us-east-1",
@@ -34,11 +34,15 @@ const OWNER_PHONE = "201011500753";
 // --- Safe Supabase Initialization ---
 // هذه الدالة تمنع توقف التطبيق إذا كانت الروابط غير صحيحة
 const createSafeSupabaseClient = () => {
-    const isConfigured = SUPABASE_URL && SUPABASE_URL.startsWith("http") && SUPABASE_ANON_KEY && SUPABASE_ANON_KEY.length > 20 && !SUPABASE_URL.includes("YOUR_SUPABASE");
+    // Trim values to remove any accidental whitespace
+    const url = SUPABASE_URL ? SUPABASE_URL.trim() : "";
+    const key = SUPABASE_ANON_KEY ? SUPABASE_ANON_KEY.trim() : "";
+
+    const isConfigured = url && url.startsWith("http") && key && key.length > 20 && !url.includes("YOUR_SUPABASE");
     
     if (isConfigured) {
         try {
-            return createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            return createClient(url, key);
         } catch (e) {
             console.error("Supabase Init Error:", e);
         }
@@ -50,12 +54,12 @@ const createSafeSupabaseClient = () => {
             getSession: async () => ({ data: { session: null }, error: null }),
             onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
             signUp: async () => {
-                alert("⚠️ الرجاء إعداد Supabase في الكود أولاً!\n(SUPABASE_URL & SUPABASE_ANON_KEY)");
-                return { data: null, error: { message: "Configuration missing" } };
+                alert("⚠️ خطأ في الاتصال: يرجى التحقق من مفاتيح Supabase.");
+                return { data: null, error: { message: "Configuration missing or invalid" } };
             },
             signInWithPassword: async () => {
-                alert("⚠️ الرجاء إعداد Supabase في الكود أولاً!\n(SUPABASE_URL & SUPABASE_ANON_KEY)");
-                return { data: null, error: { message: "Configuration missing" } };
+                alert("⚠️ خطأ في الاتصال: يرجى التحقق من مفاتيح Supabase.");
+                return { data: null, error: { message: "Configuration missing or invalid" } };
             },
             signOut: async () => {},
         }
